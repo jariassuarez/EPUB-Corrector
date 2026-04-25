@@ -1,0 +1,15 @@
+[project]
+name = "epubcorrector"
+version = "0.1.0"
+description = "EPubCorrector - Correct EPub grammatical errors using LLMStudio"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+	"beautifulsoup4>=4.13.0",
+	"ebooklib>=0.19",
+	"lxml>=5.0.0",
+	"openai>=1.40.0",
+]
+
+[project.scripts]
+epub-corrector = "epub_corrector.cli:main"
