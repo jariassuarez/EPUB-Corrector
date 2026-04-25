@@ -13,3 +13,7 @@ dependencies = [
 
 [project.scripts]
 epub-corrector = "epub_corrector.cli:main"
+epub-corrector-gui = "epub_corrector.gui:main"
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]

@@ -1,14 +1,10 @@
-# EPUB Corrector (LM Studio)
+# EPUB Corrector
 
-This tool reads an EPUB, sends text chunks to your local LM Studio model, and writes a corrected EPUB. Every proposed change is shown in the terminal as a side-by-side diff, and you accept or skip each one interactively.
+Correct grammar, punctuation, capitalization, and typos in EPUB files using a local LLM via an OpenAI-compatible API (e.g., LM Studio, Ollama, or any other local server).
 
-Goal:
-- Correct grammar, punctuation, capitalization, and typos.
-- Preserve meaning and context.
+The tool sends text chunks from the EPUB to the model, then presents every proposed change for your review. Accepted edits are written back to a corrected EPUB file.
 
-Important:
-- No LLM workflow can guarantee 100% zero-context drift.
-- This tool uses conservative safety filters (`--similarity-threshold` and `--max-change-ratio`) to auto-reject edits that look too aggressive.
+> **Important:** No LLM workflow can guarantee 100% zero-context drift. Conservative safety filters (`--similarity-threshold` and `--max-change-ratio`) auto-reject edits that look too aggressive.
 
 ---
 
@@ -18,24 +14,35 @@ Important:
 uv sync          # or: pip install -e .
 ```
 
-## LM Studio setup
-
-1. Open LM Studio and start the local server.
-2. Load your model.
-3. The OpenAI-compatible endpoint is available at `http://127.0.0.1:1234/v1` by default.
+Requires Python >= 3.14.
 
 ---
 
-## Basic usage
+## Quick Start
+
+### GUI mode
+
+Launch the graphical interface:
+
+```bash
+epub-corrector-gui
+```
+
+The GUI lets you:
+- Browse for input/output EPUB files
+- Connect to your local LLM server and **refresh the model list**
+- Adjust all processing options visually
+- Toggle **auto-accept all** changes
+- Review diffs side-by-side with color highlighting
+- Stop processing mid-run
+
+### CLI mode
 
 **Interactive — pick a book from the `books/` folder:**
 
 ```bash
 epub-corrector
 ```
-
-You will see a numbered list of `.epub` files in `./books/` and be prompted to choose one.
-The corrected file is saved as `<original-name>_corrected.epub` in the current directory.
 
 **Explicit paths:**
 
@@ -47,7 +54,20 @@ If `output` is omitted, it defaults to `<input-stem>_corrected.epub`.
 
 ---
 
-## Interactive review
+## Server Setup (LM Studio, etc.)
+
+1. Open LM Studio (or your preferred local LLM server).
+2. Start the local server.
+3. Load your model.
+4. The OpenAI-compatible endpoint is available at `http://127.0.0.1:1234/v1` by default.
+
+> The GUI can automatically fetch available models from the `/models` endpoint.
+
+---
+
+## Interactive Review
+
+### Terminal (CLI)
 
 For every proposed change that passes the safety filters, a side-by-side diff is shown:
 
@@ -58,21 +78,31 @@ ORIGINAL                                 │ PROPOSED
 He don't know what he was doing here.   │ He didn't know what he was doing here.
 ────────────────────────────────────────────────────────────────────────────────
 chapter01.xhtml
-[Enter] Accept  [n] Skip  [Shift+Enter or a] Accept all
+[Enter] Accept  [n] Skip  [r] Retry  [a] Accept all  [p] Pause auto-accept
 ```
 
 | Key | Action |
 |---|---|
 | `Enter` | Accept this change |
 | `n` | Skip this change |
-| `a` or `Shift+Enter` | Accept this and all remaining changes automatically |
+| `r` | Retry the batch (if the model produced a bad result) |
+| `a` | Accept this and all remaining changes automatically |
+| `p` | Pause auto-accept and resume manual review |
 | `Ctrl+C` | Abort |
 
 Deleted text is shown with a red background; inserted text with green.
 
+### GUI
+
+The review panel shows:
+- **Original** and **Proposed** text side-by-side with color-coded diffs
+- Document name being processed
+- Buttons: **Accept (Enter)**, **Skip (n)**, **Retry (r)**, **Accept All (a)**
+- Keyboard shortcuts work when the review panel is focused
+
 ---
 
-## Change report (`--report`)
+## Change Report (`--report`)
 
 After processing, write a CSV record of every accepted and rejected edit:
 
@@ -82,7 +112,7 @@ epub-corrector --report changes.csv
 
 ---
 
-## Resume / checkpoint (`--checkpoint`)
+## Resume / Checkpoint (`--checkpoint`)
 
 For very large EPUBs, save progress after each document so an interrupted run can continue where it left off:
 
@@ -94,7 +124,7 @@ Re-run the exact same command after an interruption — already-processed docume
 
 ---
 
-## All options
+## All CLI Options
 
 ```
 epub-corrector [input] [output] [options]
@@ -121,7 +151,7 @@ options:
 
 ---
 
-## Recommended settings for long EPUBs
+## Recommended Settings for Long EPUBs
 
 ```bash
 epub-corrector \
@@ -129,3 +159,16 @@ epub-corrector \
   --max-change-ratio 0.15 \
   --checkpoint progress.json
 ```
+
+---
+
+## Building a Standalone Executable
+
+A PyInstaller build script is included for creating a single-file Windows executable of the GUI:
+
+```bash
+uv sync --extra build
+python build_exe.py
+```
+
+The resulting executable will be at `dist/epub-corrector-gui.exe`.
