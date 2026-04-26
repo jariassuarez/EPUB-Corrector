@@ -9,7 +9,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Callable, Iterable, Protocol
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 from ebooklib import ITEM_DOCUMENT, epub
@@ -20,6 +20,10 @@ SKIP_PARENT_TAGS = {
     "head", "title", "meta", "link", "noscript", "nav",
     "header", "footer", "aside", "address",
 }
+
+
+class StopProcessing(Exception):
+    """Raised when the user requests to stop processing."""
 
 
 class ReviewCallback(Protocol):
@@ -119,10 +123,12 @@ _REWRITE_SYSTEM_PROMPT = (
     "- Preserve all quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear\n"
     "- Do not alter markup, formatting structure, or whitespace\n"
     "- Output clean prose only — no bolding, no annotations"
+    "- Do not remove quotation marks from short standalone lines — these may represent internal thought or narration conventions from the source text."
 )
 
 _DEFAULT_SYSTEM_PROMPT = (
     "You are a strict grammar and spelling corrector. "
+    "Do not remove quotation marks from short standalone lines — these may represent internal thought or narration conventions from the source text."
     "Correct only grammar, punctuation, capitalization, and obvious typos. "
     "Do NOT change numbers, dates, entities, or formatting. "
     "Do NOT under any circumstances change names, places, or any other factual information. "
@@ -441,6 +447,7 @@ def _process_document(
     translate: bool = False,
     target_language: str | None = None,
     max_workers: int = 1,
+    should_stop: Callable[[], bool] | None = None,
 ) -> list[str]:
     raw = item.get_content()
     soup = BeautifulSoup(raw, "xml")
@@ -457,6 +464,9 @@ def _process_document(
         max_segments=max_segments_per_request,
         max_chars=max_chars_per_request,
     ), start=1):
+        if should_stop and should_stop():
+            raise StopProcessing()
+
         stats.groups_seen += 1
         stats.segments_seen += len(batch)
         originals = [s.original_text for s in batch]
@@ -477,6 +487,9 @@ def _process_document(
             logging.warning("Model request failed for one batch: %s", exc)
             print(f"    FAILED: {exc}")
             continue
+
+        if should_stop and should_stop():
+            raise StopProcessing()
 
         seg_idx = 0
         while seg_idx < len(batch):
@@ -509,6 +522,8 @@ def _process_document(
                     action = review_callback.ask(segment.original_text, new_text, doc_name)
                 else:
                     action = "accept"
+                if should_stop and should_stop():
+                    raise StopProcessing()
                 if action == "accept_all":
                     review.auto_accept = True
                     print("Auto-accepting all remaining changes.")
@@ -541,6 +556,8 @@ def _process_document(
                         logging.warning("Model request failed on retry: %s", exc)
                         print(f"    FAILED on retry: {exc}")
                         break
+                    if should_stop and should_stop():
+                        raise StopProcessing()
                     continue
             else:
                 if review_callback is not None:

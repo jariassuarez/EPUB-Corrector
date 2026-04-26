@@ -29,6 +29,7 @@ from .core import (
     ProcessingStats,
     ReviewCallback,
     ReviewState,
+    StopProcessing,
     _extract_segment_texts,
     _load_checkpoint,
     _process_document,
@@ -60,9 +61,10 @@ def fetch_models(base_url: str) -> list[str]:
 class GuiReview(ReviewCallback):
     """Thread-safe review callback using queues."""
 
-    def __init__(self) -> None:
+    def __init__(self, stop_event: threading.Event) -> None:
         self.request_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.response_queue: queue.Queue[str] = queue.Queue()
+        self.stop_event = stop_event
 
     def ask(self, original: str, proposed: str, doc_name: str) -> str:
         self.request_queue.put({
@@ -70,8 +72,13 @@ class GuiReview(ReviewCallback):
             "proposed": proposed,
             "doc_name": doc_name,
         })
-        # Block worker thread until GUI thread sends answer
-        return self.response_queue.get()
+        # Block worker thread until GUI thread sends answer or stop is requested
+        while True:
+            try:
+                return self.response_queue.get(timeout=0.2)
+            except queue.Empty:
+                if self.stop_event.is_set():
+                    raise StopProcessing()
 
 
 
@@ -94,8 +101,8 @@ class EpubCorrectorGui:
         root.minsize(800, 600)
 
         self.worker_thread: threading.Thread | None = None
-        self.stop_requested = False
-        self.review = GuiReview()
+        self.stop_event = threading.Event()
+        self.review = GuiReview(self.stop_event)
         self.review_state = ReviewState()
 
         self._build_ui()
@@ -452,7 +459,7 @@ class EpubCorrectorGui:
         except ValueError:
             return
 
-        self.stop_requested = False
+        self.stop_event.clear()
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
 
@@ -481,8 +488,7 @@ class EpubCorrectorGui:
         self.worker_thread.start()
 
     def _stop(self) -> None:
-        self.stop_requested = True
-        pass
+        self.stop_event.set()
 
     def _worker(
         self,
@@ -528,7 +534,7 @@ class EpubCorrectorGui:
             max_change_ratio = 1.0 if (is_translate or aggressive) else max_change
 
             for item in self._iter_document_items(book):
-                if self.stop_requested:
+                if self.stop_event.is_set():
                     print("Stopping as requested.")
                     break
 
@@ -568,6 +574,7 @@ class EpubCorrectorGui:
                     translate=is_translate,
                     target_language=translate,
                     max_workers=max_workers,
+                    should_stop=self.stop_event.is_set,
                 )
 
                 if checkpoint_path:
@@ -595,6 +602,8 @@ class EpubCorrectorGui:
                 )
             )
             print("Done.")
+        except StopProcessing:
+            print("Stopping as requested.")
         except Exception as exc:
             print(f"ERROR: {exc}")
         finally:
@@ -612,6 +621,7 @@ class EpubCorrectorGui:
                 yield id_to_item[idref]
 
     def _on_worker_done(self) -> None:
+        self._clear_review()
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
 
