@@ -104,6 +104,7 @@ def _build_messages(text: str, no_thinking: bool = False) -> list[dict[str, str]
         "You are a strict grammar and spelling corrector. "
         "Correct only grammar, punctuation, capitalization, and obvious typos. "
         "Do NOT change numbers, dates, entities, or formatting. "
+        "Do NOT under any circumstances change names, places, or any other factual information. "
         "Do not change formatting, markup, or whitespace. "
         "Adopt the tone of a professional fiction editor. Provide clean, flowing prose without bolding, and ensure the grammar follows standard novel-writing conventions. "
         "Do not add or remove facts, style, tone, meaning, entities, numbers, chronology, or dialogue intent. "
