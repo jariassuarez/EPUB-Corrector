@@ -99,113 +99,49 @@ def _split_large_group(
     return result
 
 
-def _build_messages(texts: list[str], no_thinking: bool = False) -> list[dict[str, str]]:
+def _build_messages(text: str, no_thinking: bool = False) -> list[dict[str, str]]:
     system = (
         "You are a strict grammar and spelling corrector. "
         "Correct only grammar, punctuation, capitalization, and obvious typos. "
+        "Do NOT change numbers, dates, entities, or formatting. "
         "Do not change formatting, markup, or whitespace. "
-        "Adopt the tone of a professional fiction editor. Provide clean, flowing prose without bolding, and ensure the grammar follows standard novel-writing conventions."
+        "Adopt the tone of a professional fiction editor. Provide clean, flowing prose without bolding, and ensure the grammar follows standard novel-writing conventions. "
         "Do not add or remove facts, style, tone, meaning, entities, numbers, chronology, or dialogue intent. "
         "Do not summarize. Do not paraphrase unless required for grammar. "
-        "Return ONLY a JSON array of objects for segments that need changes. "
-        "Each object must have \"i\" (0-based index) and \"t\" (corrected text). "
-        "Omit unchanged segments. If nothing needs correction, return []."
+        "Preserve ALL quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear, including at the very start and very end of the text. "
+        "Return ONLY the corrected version of the text you are sent, with no extra commentary, explanation, or formatting."
     )
     if no_thinking:
         system = "/no_think\n\n" + system
-    user_payload = {
-        "segments": [{"i": i, "t": t} for i, t in enumerate(texts)],
-    }
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        {"role": "user", "content": text},
     ]
 
 
-_SMART_PUNCT_MAP = str.maketrans({
-    "\u201c": '"',   # left double quotation mark
-    "\u201d": '"',   # right double quotation mark
-    "\u2018": "'",   # left single quotation mark
-    "\u2019": "'",   # right single quotation mark
-    "\u2013": "-",   # en dash
-    "\u2014": "-",   # em dash
-    "\u2026": "...", # horizontal ellipsis
-})
+# Boundary punctuation that must never be dropped
+_BOUNDARY_PUNCT = frozenset('""\'\'-–—…')
 
 
-# Characters to strip entirely (invisible/confusing)
-_STRIP_CHARS = "\ufeff\u200b\u200c\u200d\u00ad"
-
-
-def _normalize_json_text(text: str) -> str:
-    """Normalize smart Unicode punctuation and escape literal newlines inside JSON strings."""
-    # Remove BOM and other invisible characters
-    for ch in _STRIP_CHARS:
-        text = text.replace(ch, "")
-    # Replace non-breaking spaces with regular spaces
-    text = text.replace("\u00a0", " ")
-    # Replace smart quotes, dashes, ellipsis with ASCII equivalents
-    text = text.translate(_SMART_PUNCT_MAP)
-    result: list[str] = []
-    in_string = False
-    escaped = False
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if escaped:
-            result.append(ch)
-            escaped = False
-            i += 1
-            continue
-        if ch == "\\":
-            result.append(ch)
-            escaped = True
-            i += 1
-            continue
-        if ch == '"':
-            in_string = not in_string
-            result.append(ch)
-            i += 1
-            continue
-        if in_string and ch in "\n\r":
-            result.append("\\n" if ch == "\n" else "\\r")
-            i += 1
-            continue
-        result.append(ch)
-        i += 1
-    return "".join(result)
-
-
-def _extract_corrections(raw: str, originals: list[str]) -> list[str]:
-    result = list(originals)
-    candidates = [raw.strip()]
-    fenced = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", raw, re.DOTALL)
+def _extract_correction(raw: str) -> str:
+    """Strip optional markdown fences and return clean corrected text."""
+    text = raw.strip()
+    fenced = re.search(r"^```(?:\w+)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fenced:
-        candidates.append(fenced.group(1).strip())
-    bracketed = re.search(r"(\[.*\])", raw, re.DOTALL)
-    if bracketed:
-        candidates.append(bracketed.group(1).strip())
-    for candidate in candidates:
-        if any(c in candidate for c in "\n\r\u201c\u201d\u2018\u2019"):
-            candidate = _normalize_json_text(candidate)
-        try:
-            parsed = json.loads(candidate)
-            if not isinstance(parsed, list):
-                continue
-            if parsed == []:
-                return result
-            if all(
-                isinstance(item, dict) and "i" in item and "t" in item
-                for item in parsed
-            ):
-                for item in parsed:
-                    idx = item["i"]
-                    if isinstance(idx, int) and 0 <= idx < len(result) and isinstance(item["t"], str):
-                        result[idx] = item["t"]
-                return result
-        except json.JSONDecodeError:
-            continue
-    raise ValueError("Could not parse a valid corrections response from model output")
+        text = fenced.group(1).strip()
+    return text
+
+
+def _restore_boundary_punctuation(original: str, corrected: str) -> str:
+    """Re-instate leading/trailing quotes, dashes, or ellipsis the model may have stripped."""
+    out = corrected
+    # Leading
+    if original and out and original[0] in _BOUNDARY_PUNCT and out[0] != original[0]:
+        out = original[0] + out
+    # Trailing
+    if original and out and original[-1] in _BOUNDARY_PUNCT and out[-1] != original[-1]:
+        out = out + original[-1]
+    return out
 
 
 def _request_corrections(
@@ -215,51 +151,47 @@ def _request_corrections(
     kwargs = {}
     if no_thinking:
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-    payload = {
-        "model": model,
-        "temperature": temperature,
-        "messages": _build_messages(texts, no_thinking=no_thinking),
-        **kwargs,
-    }
-    if debug:
-        print("\n--- REQUEST PAYLOAD ---")
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        print("--- END REQUEST ---\n")
 
-    last_exc: Exception | None = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                temperature=temperature,
-                messages=payload["messages"],
-                **kwargs,
-            )
-            content = response.choices[0].message.content or ""
-            if debug:
-                print(f"\n--- MODEL RESPONSE (attempt {attempt}) ---")
-                print(content)
-                print("--- END RESPONSE ---\n")
-            return _extract_corrections(content, originals=texts)
-        except ValueError:
-            logging.warning(
-                "Failed to parse model response (attempt %d/%d). Raw content:\n%s",
-                attempt, max_retries, content,
-            )
-            last_exc = ValueError(
-                f"Could not parse model response after {max_retries} attempts. Last raw content:\n{content}"
-            )
-            if attempt < max_retries:
-                print(f"    Parse failed, retrying... ({attempt}/{max_retries})")
-                continue
-            raise last_exc
-        except Exception as exc:
-            logging.warning("Model request failed (attempt %d/%d): %s", attempt, max_retries, exc)
-            last_exc = exc
-            if attempt < max_retries:
-                print(f"    Request failed, retrying... ({attempt}/{max_retries})")
-                continue
-            raise last_exc
+    results: list[str] = []
+    for text in texts:
+        payload = {
+            "model": model,
+            "temperature": temperature,
+            "messages": _build_messages(text, no_thinking=no_thinking),
+            **kwargs,
+        }
+        if debug:
+            print("\n--- REQUEST PAYLOAD ---")
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print("--- END REQUEST ---\n")
+
+        last_exc: Exception | None = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    temperature=temperature,
+                    messages=payload["messages"],
+                    **kwargs,
+                )
+                content = response.choices[0].message.content or ""
+                if debug:
+                    print(f"\n--- MODEL RESPONSE (attempt {attempt}) ---")
+                    print(content)
+                    print("--- END RESPONSE ---\n")
+                corrected = _extract_correction(content)
+                corrected = _restore_boundary_punctuation(text, corrected)
+                results.append(corrected)
+                break
+            except Exception as exc:
+                logging.warning("Model request failed (attempt %d/%d): %s", attempt, max_retries, exc)
+                last_exc = exc
+                if attempt < max_retries:
+                    print(f"    Request failed, retrying... ({attempt}/{max_retries})")
+                    continue
+                raise last_exc
+
+    return results
 
 
 def _change_is_safe(
