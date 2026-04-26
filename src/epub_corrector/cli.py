@@ -28,6 +28,7 @@ from .core import (
     ProcessingStats,
     ReviewCallback,
     ReviewState,
+    _extract_segment_texts,
     _iter_document_items,
     _load_checkpoint,
     _process_document,
@@ -285,6 +286,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum total characters of context to send per request.",
     )
     parser.add_argument(
+        "--conserve-context", action="store_true",
+        help="Preserve context across documents/chapters instead of resetting it for each HTML file.",
+    )
+    parser.add_argument(
         "--similarity-threshold", type=float, default=0.88,
         help="Auto-reject edits below this sequence similarity.",
     )
@@ -340,15 +345,22 @@ def run(args: argparse.Namespace) -> int:
                 len(checkpoint),
             )
 
+    conserved_context: list[str] = []
+
     for item in _iter_document_items(book):
         doc_name: str = item.file_name
 
         if doc_name in checkpoint:
             logging.info("Skipping already-processed document: %s", doc_name)
             item.set_content(base64.b64decode(checkpoint[doc_name]))
+            if args.conserve_context:
+                texts = _extract_segment_texts(item)
+                conserved_context.extend(texts)
+                if args.max_context > 0:
+                    conserved_context = conserved_context[-args.max_context:]
             continue
 
-        _process_document(
+        conserved_context = _process_document(
             item=item,
             doc_name=doc_name,
             client=client,
@@ -367,6 +379,7 @@ def run(args: argparse.Namespace) -> int:
             use_schema=args.schema,
             max_context=args.max_context,
             max_context_chars=args.max_context_chars,
+            previous_context=conserved_context if args.conserve_context else None,
         )
 
         if args.checkpoint:

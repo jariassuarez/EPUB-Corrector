@@ -314,6 +314,12 @@ def _reorder_items_by_spine(book) -> None:
     ]
 
 
+def _extract_segment_texts(item) -> list[str]:
+    soup = BeautifulSoup(item.get_content(), "xml")
+    segments = _iter_rewritable_segments(soup)
+    return [s.original_text for s in segments]
+
+
 def _process_document(
     item,
     doc_name: str,
@@ -333,16 +339,17 @@ def _process_document(
     use_schema: bool = False,
     max_context: int = 0,
     max_context_chars: int = 0,
-) -> None:
+    previous_context: list[str] | None = None,
+) -> list[str]:
     raw = item.get_content()
     soup = BeautifulSoup(raw, "xml")
 
     segments = _iter_rewritable_segments(soup)
     if not segments:
-        return
+        return list(previous_context) if previous_context else []
 
     stats.docs_seen += 1
-    recent_context: list[str] = []
+    recent_context: list[str] = list(previous_context) if previous_context else []
 
     for batch_idx, batch in enumerate(_split_large_group(
         segments,
@@ -450,6 +457,7 @@ def _process_document(
             recent_context = recent_context[-max_context:]
 
     item.set_content(str(soup).encode("utf-8"))
+    return recent_context
 
 
 def _iter_document_items(book) -> Iterable:

@@ -124,6 +124,49 @@ Re-run the exact same command after an interruption — already-processed docume
 
 ---
 
+## Context and Cross-Chapter Memory
+
+By default, each HTML file (chapter) in the EPUB is processed in isolation. The model sees only the text in the current batch, plus any earlier paragraphs from the **same** chapter. This keeps memory usage low, but the model has no memory of what happened in previous chapters.
+
+### `--max-context`
+
+Sets how many previous **segments** (individual text nodes/paragraphs) are sent as context for each correction. The model receives these segments marked `[CONTEXT]` and corrects only the `[CORRECT THIS]` segment.
+
+```bash
+epub-corrector input.epub output.epub --max-context 50
+```
+
+### `--max-context-chars`
+
+Hard cap on the total character budget for context in a single request. Even if `--max-context` allows 50 segments, the tool will stop adding context once this character limit is reached.
+
+```bash
+epub-corrector input.epub output.epub --max-context 100 --max-context-chars 8000
+```
+
+### `--conserve-context`
+
+Without this flag, context is reset to empty at the start of every chapter. With `--conserve-context`, the last segments from the previous chapter are carried forward into the next one, giving the model a continuous memory of the book.
+
+```bash
+epub-corrector input.epub output.epub --conserve-context --max-context 100 --max-context-chars 80000
+```
+
+> **Resuming from checkpoint:** When using `--checkpoint` together with `--conserve-context`, already-processed documents from the checkpoint are parsed and their segments are added to the conserved context, so continuity is maintained even after an interrupted run.
+
+### Picking the right budget for your model
+
+| Model context | Recommended starting point |
+|---|---|
+| 8K tokens | `--max-context 10 --max-context-chars 2000` |
+| 32K tokens | `--max-context 40 --max-context-chars 8000` |
+| 128K tokens | `--max-context 150 --max-context-chars 40000` |
+| 250K tokens | `--max-context 200 --max-context-chars 80000` |
+
+A rough rule of thumb is ~4 English characters per token. Leave some headroom for the system prompt, the target batch, and the model's response.
+
+---
+
 ## All CLI Options
 
 ```
@@ -142,6 +185,7 @@ options:
   --max-chars-per-request N       Max characters per model call (default: 6000)
   --max-context N                 Number of previous segments to include as context (default: 0)
   --max-context-chars N           Maximum total characters of context per request (default: 3000)
+  --conserve-context              Preserve context across documents/chapters instead of resetting per file
   --similarity-threshold FLOAT    Auto-reject edits below this similarity (default: 0.88)
   --max-change-ratio FLOAT        Auto-reject edits above this change ratio (default: 0.20)
   --report PATH                   Write CSV change report to PATH

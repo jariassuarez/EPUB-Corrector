@@ -22,6 +22,7 @@ from .core import (
     ProcessingStats,
     ReviewCallback,
     ReviewState,
+    _extract_segment_texts,
     _load_checkpoint,
     _process_document,
     _reorder_items_by_spine,
@@ -152,12 +153,14 @@ class EpubCorrectorGui:
         self.verbose_var = tk.BooleanVar(value=False)
         self.auto_accept_var = tk.BooleanVar(value=False)
         self.schema_var = tk.BooleanVar(value=False)
+        self.conserve_context_var = tk.BooleanVar(value=False)
         self.auto_accept_var.trace_add("write", self._on_auto_accept_toggle)
         ttk.Checkbutton(cb_frame, text="No thinking", variable=self.no_thinking_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Schema", variable=self.schema_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Debug", variable=self.debug_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Verbose", variable=self.verbose_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Auto-accept all", variable=self.auto_accept_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(cb_frame, text="Conserve context", variable=self.conserve_context_var).pack(side=tk.LEFT, padx=5)
 
         # --- Files ---
         files_frame = ttk.LabelFrame(self.scrollable_frame, text="Files", padding=10)
@@ -442,6 +445,7 @@ class EpubCorrectorGui:
                 "max_change": max_change,
                 "max_context": self._get_option("Max context segments", int),
                 "max_context_chars": self._get_option("Max context chars", int),
+                "conserve_context": self.conserve_context_var.get(),
             },
             daemon=True,
         )
@@ -462,6 +466,7 @@ class EpubCorrectorGui:
         max_change: float,
         max_context: int,
         max_context_chars: int,
+        conserve_context: bool,
     ) -> None:
         try:
             level = logging.INFO if self.verbose_var.get() else logging.WARNING
@@ -483,6 +488,8 @@ class EpubCorrectorGui:
                 if checkpoint:
                     print(f"Resuming from checkpoint: {len(checkpoint)} document(s) already processed.")
 
+            conserved_context: list[str] = []
+
             for item in self._iter_document_items(book):
                 if self.stop_requested:
                     print("Stopping as requested.")
@@ -493,9 +500,14 @@ class EpubCorrectorGui:
                 if doc_name in checkpoint:
                     print(f"Skipping already-processed document: {doc_name}")
                     item.set_content(base64.b64decode(checkpoint[doc_name]))
+                    if conserve_context:
+                        texts = _extract_segment_texts(item)
+                        conserved_context.extend(texts)
+                        if max_context > 0:
+                            conserved_context = conserved_context[-max_context:]
                     continue
 
-                _process_document(
+                conserved_context = _process_document(
                     item=item,
                     doc_name=doc_name,
                     client=client,
@@ -514,6 +526,7 @@ class EpubCorrectorGui:
                     use_schema=self.schema_var.get(),
                     max_context=max_context,
                     max_context_chars=max_context_chars,
+                    previous_context=conserved_context if conserve_context else None,
                 )
 
                 if checkpoint_path:
