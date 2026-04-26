@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "corrected_text": {
+      "type": "string",
+      "description": "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied. No reasoning, no commentary, no markdown fences."
+    }
+  },
+  "required": ["corrected_text"],
+  "additionalProperties": false
+}

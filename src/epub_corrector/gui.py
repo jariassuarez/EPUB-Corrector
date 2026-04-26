@@ -148,8 +148,10 @@ class EpubCorrectorGui:
         self.debug_var = tk.BooleanVar(value=False)
         self.verbose_var = tk.BooleanVar(value=False)
         self.auto_accept_var = tk.BooleanVar(value=False)
+        self.schema_var = tk.BooleanVar(value=False)
         self.auto_accept_var.trace_add("write", self._on_auto_accept_toggle)
         ttk.Checkbutton(cb_frame, text="No thinking", variable=self.no_thinking_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(cb_frame, text="Schema", variable=self.schema_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Debug", variable=self.debug_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Verbose", variable=self.verbose_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Auto-accept all", variable=self.auto_accept_var).pack(side=tk.LEFT, padx=5)
@@ -502,6 +504,7 @@ class EpubCorrectorGui:
                     review_callback=self.review,
                     no_thinking=self.no_thinking_var.get(),
                     debug=self.debug_var.get(),
+                    use_schema=self.schema_var.get(),
                 )
 
                 if checkpoint_path:

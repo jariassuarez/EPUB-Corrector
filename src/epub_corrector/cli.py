@@ -298,6 +298,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-thinking", action="store_true",
         help="Disable reasoning/thinking mode (passes thinking.type=disabled to the API).",
     )
+    parser.add_argument(
+        "--schema", action="store_true",
+        help="Use structured JSON output (response_format=json_object) and parse 'corrected_text' from the response. Useful for models that emit reasoning or extra commentary.",
+    )
     return parser
 
 
@@ -352,6 +356,7 @@ def run(args: argparse.Namespace) -> int:
             review_callback=review_callback,
             no_thinking=args.no_thinking,
             debug=args.debug,
+            use_schema=args.schema,
         )
 
         if args.checkpoint:

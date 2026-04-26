@@ -99,7 +99,7 @@ def _split_large_group(
     return result
 
 
-def _build_messages(text: str, no_thinking: bool = False) -> list[dict[str, str]]:
+def _build_messages(text: str, no_thinking: bool = False, use_schema: bool = False) -> list[dict[str, str]]:
     system = (
         "You are a strict grammar and spelling corrector. "
         "Correct only grammar, punctuation, capitalization, and obvious typos. "
@@ -112,6 +112,11 @@ def _build_messages(text: str, no_thinking: bool = False) -> list[dict[str, str]
         "Preserve ALL quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear, including at the very start and very end of the text. "
         "Return ONLY the corrected version of the text you are sent, with no extra commentary, explanation, or formatting."
     )
+    if use_schema:
+        system += (
+            " Respond with a JSON object containing a single key 'corrected_text' "
+            "whose value is the corrected text string. Do not include any other keys or commentary."
+        )
     if no_thinking:
         system = "/no_think\n\n" + system
     return [
@@ -124,12 +129,19 @@ def _build_messages(text: str, no_thinking: bool = False) -> list[dict[str, str]
 _BOUNDARY_PUNCT = frozenset('""\'\'-–—…')
 
 
-def _extract_correction(raw: str) -> str:
-    """Strip optional markdown fences and return clean corrected text."""
+def _extract_correction(raw: str, use_schema: bool = False) -> str:
+    """Strip optional markdown fences, parse JSON schema output when enabled, and return clean corrected text."""
     text = raw.strip()
     fenced = re.search(r"^```(?:\w+)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fenced:
         text = fenced.group(1).strip()
+    if use_schema:
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict) and "corrected_text" in data:
+                return str(data["corrected_text"])
+        except json.JSONDecodeError:
+            pass
     return text
 
 
@@ -148,17 +160,36 @@ def _restore_boundary_punctuation(original: str, corrected: str) -> str:
 def _request_corrections(
     client: OpenAI, model: str, texts: list[str], temperature: float,
     no_thinking: bool = False, debug: bool = False, max_retries: int = 3,
+    use_schema: bool = False,
 ) -> list[str]:
     kwargs = {}
     if no_thinking:
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    if use_schema:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "text_correction",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "corrected_text": {
+                            "type": "string",
+                            "description": "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied.",
+                        }
+                    },
+                    "required": ["corrected_text"],
+                    "additionalProperties": False,
+                },
+            },
+        }
 
     results: list[str] = []
     for text in texts:
         payload = {
             "model": model,
             "temperature": temperature,
-            "messages": _build_messages(text, no_thinking=no_thinking),
+            "messages": _build_messages(text, no_thinking=no_thinking, use_schema=use_schema),
             **kwargs,
         }
         if debug:
@@ -180,7 +211,7 @@ def _request_corrections(
                     print(f"\n--- MODEL RESPONSE (attempt {attempt}) ---")
                     print(content)
                     print("--- END RESPONSE ---\n")
-                corrected = _extract_correction(content)
+                corrected = _extract_correction(content, use_schema=use_schema)
                 corrected = _restore_boundary_punctuation(text, corrected)
                 results.append(corrected)
                 break
@@ -269,6 +300,7 @@ def _process_document(
     review_callback: ReviewCallback | None,
     no_thinking: bool = False,
     debug: bool = False,
+    use_schema: bool = False,
 ) -> None:
     raw = item.get_content()
     soup = BeautifulSoup(raw, "xml")
@@ -291,7 +323,7 @@ def _process_document(
         try:
             corrected = _request_corrections(
                 client=client, model=model, texts=originals, temperature=temperature,
-                no_thinking=no_thinking, debug=debug,
+                no_thinking=no_thinking, debug=debug, use_schema=use_schema,
             )
         except Exception as exc:
             stats.failed_groups += 1
@@ -349,7 +381,7 @@ def _process_document(
                     try:
                         corrected = _request_corrections(
                             client=client, model=model, texts=originals, temperature=temperature,
-                            no_thinking=no_thinking, debug=debug,
+                            no_thinking=no_thinking, debug=debug, use_schema=use_schema,
                         )
                     except Exception as exc:
                         stats.failed_groups += 1

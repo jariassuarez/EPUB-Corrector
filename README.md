@@ -145,11 +145,29 @@ options:
   --report PATH                   Write CSV change report to PATH
   --checkpoint PATH               Checkpoint file for resume support
   --no-thinking                   Disable reasoning/thinking mode for supported models
+  --schema                        Use structured JSON output to isolate corrected text from model commentary/reasoning
   --debug                         Print raw request/response payloads for every model call
   --verbose                       Enable verbose logging
 ```
 
 ---
+
+## Structured Output (`--schema`)
+
+Some models (e.g., Gemma 4, DeepSeek-R1, or any model configured with reasoning/thinking) emit internal reasoning or commentary before the actual corrected text. This can leak into the EPUB and corrupt the output.
+
+Enable `--schema` to force the model to return a JSON object with a single `corrected_text` field, which the tool then extracts automatically:
+
+```bash
+epub-corrector input.epub output.epub --schema
+```
+
+When `--schema` is enabled:
+- The API receives `response_format={"type": "json_object"}`
+- The system prompt is extended to instruct the model to return only `{"corrected_text": "..."}`
+- The tool parses the JSON response and extracts the text, discarding any surrounding commentary
+
+Recommended for models that yap, think out loud, or include `<think>` blocks in their output.
 
 ## Recommended Settings for Long EPUBs
 
