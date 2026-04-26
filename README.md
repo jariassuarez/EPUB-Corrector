@@ -356,4 +356,5 @@ The resulting executable will be at `dist/epub-corrector-gui.exe`.
 | Model | Structured Output | Thinking | Notes |
 |---|---|---|---|
 | `mistralai/ministral-3-3b` | No | No | Works very well, useful for PCs with not very powerful GPUs |
-| `google/gemma-4-e4b` | Yes | No | Works extremely well and fast, requires more VRAM |
+| `google/gemma-4-e4b` | Yes | No | Works extremely well and fast, requires more VRAM. Spanish was not so good, made some errors |
+| `ministral-3-14b-instruct-2512` | Yes | No | Works extremely well, better than gemma 4. Tried Spanish and English, both had amazing results |
