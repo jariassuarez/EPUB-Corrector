@@ -20,3 +20,6 @@ changes.csv
 changes.html
 output/
 checkpoints/
+
+# Environment variables
+.env

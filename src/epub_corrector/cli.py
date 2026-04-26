@@ -7,6 +7,14 @@ import os
 import shutil
 import sys
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+_DEFAULT_BASE_URL = os.environ.get("EPUB_CORRECTOR_BASE_URL", "http://127.0.0.1:1234/v1")
+_DEFAULT_API_KEY = os.environ.get("EPUB_CORRECTOR_API_KEY", "lm-studio")
+_DEFAULT_MODEL = os.environ.get("EPUB_CORRECTOR_MODEL", "local-model")
+
 try:
     import termios
     import tty
@@ -257,20 +265,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output EPUB path. Defaults to <input-stem>_corrected.epub.",
     )
     parser.add_argument(
-        "--base-url", default="http://127.0.0.1:1234/v1",
-        help="LM Studio OpenAI-compatible base URL.",
+        "--base-url", default=_DEFAULT_BASE_URL,
+        help="LM Studio OpenAI-compatible base URL. Overrides EPUB_CORRECTOR_BASE_URL env var.",
     )
     parser.add_argument(
-        "--api-key", default="lm-studio",
-        help="API key (LM Studio accepts any non-empty value).",
+        "--api-key", default=_DEFAULT_API_KEY,
+        help="API key (LM Studio accepts any non-empty value). Overrides EPUB_CORRECTOR_API_KEY env var.",
     )
-    parser.add_argument("--model", default="local-model", help="Model name in LM Studio.")
+    parser.add_argument("--model", default=_DEFAULT_MODEL, help="Model name in LM Studio. Overrides EPUB_CORRECTOR_MODEL env var.")
     parser.add_argument(
         "--temperature", type=float, default=0.0,
         help="Generation temperature (keep near 0 for minimal rewriting).",
     )
     parser.add_argument(
-        "--max-segments-per-request", type=int, default=60,
+        "--max-segments-per-request", type=int, default=1,
         help="Hard limit of segments per model request.",
     )
     parser.add_argument(
@@ -315,6 +323,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--schema", action="store_true",
         help="Use structured JSON output (response_format=json_object) and parse 'corrected_text' from the response. Useful for models that emit reasoning or extra commentary.",
     )
+    parser.add_argument(
+        "--rewrite", nargs="?", const="normal", default=None, metavar="MODE",
+        help="Use the rewrite prompt aimed at improving translated literature into natural, fluent English prose instead of the strict grammar-only corrector prompt. Pass 'aggressive' to disable safety filters (sets --similarity-threshold 0 and --max-change-ratio 1.0).",
+    )
+    parser.add_argument(
+        "--translate", metavar="LANGUAGE",
+        help="Translate the book into the specified language. This automatically sets --similarity-threshold to 0.0 and --max-change-ratio to 1.0.",
+    )
+    parser.add_argument(
+        "--max-workers", type=int, default=1,
+        help="Maximum number of concurrent model requests to send in parallel within a batch. Defaults to 1 (sequential).",
+    )
     return parser
 
 
@@ -325,9 +345,34 @@ def run(args: argparse.Namespace) -> int:
     )
 
     input_path: str = args.input or _select_epub_from_books_folder()
-    output_path: str = args.output or (
-        os.path.splitext(os.path.basename(input_path))[0] + "_corrected.epub"
-    )
+    basename = os.path.basename(input_path)
+    stem = os.path.splitext(basename)[0]
+    ext = os.path.splitext(basename)[1]
+
+    translate_suffix = ""
+    if args.translate:
+        translate_suffix = f"_{args.translate.replace(' ', '_')}"
+
+    if args.output:
+        output_path = args.output
+    else:
+        os.makedirs("output", exist_ok=True)
+        output_path = os.path.join("output", f"{stem}{translate_suffix}{ext}")
+
+    checkpoint_path = args.checkpoint
+    if not checkpoint_path:
+        os.makedirs("checkpoints", exist_ok=True)
+        checkpoint_path = os.path.join("checkpoints", f"{stem}{translate_suffix}.json")
+
+    similarity_threshold = args.similarity_threshold
+    max_change_ratio = args.max_change_ratio
+    translate = bool(args.translate)
+    target_language = args.translate
+    rewrite = args.rewrite is not None
+
+    if translate or args.rewrite == "aggressive":
+        similarity_threshold = 0.0
+        max_change_ratio = 1.0
 
     client = OpenAI(base_url=args.base_url, api_key=args.api_key)
     book = epub.read_epub(input_path)
@@ -337,8 +382,8 @@ def run(args: argparse.Namespace) -> int:
     review_callback = TerminalReview()
 
     checkpoint: dict[str, str] = {}
-    if args.checkpoint:
-        checkpoint = _load_checkpoint(args.checkpoint)
+    if checkpoint_path:
+        checkpoint = _load_checkpoint(checkpoint_path)
         if checkpoint:
             logging.info(
                 "Resuming from checkpoint: %d document(s) already processed.",
@@ -368,8 +413,8 @@ def run(args: argparse.Namespace) -> int:
             temperature=args.temperature,
             max_segments_per_request=args.max_segments_per_request,
             max_chars_per_request=args.max_chars_per_request,
-            similarity_threshold=args.similarity_threshold,
-            max_change_ratio=args.max_change_ratio,
+            similarity_threshold=similarity_threshold,
+            max_change_ratio=max_change_ratio,
             stats=stats,
             records=records,
             review=review,
@@ -380,11 +425,15 @@ def run(args: argparse.Namespace) -> int:
             max_context=args.max_context,
             max_context_chars=args.max_context_chars,
             previous_context=conserved_context if args.conserve_context else None,
+            rewrite=args.rewrite,
+            translate=translate,
+            target_language=target_language,
+            max_workers=args.max_workers,
         )
 
-        if args.checkpoint:
+        if checkpoint_path:
             checkpoint[doc_name] = base64.b64encode(item.get_content()).decode()
-            _save_checkpoint(args.checkpoint, checkpoint)
+            _save_checkpoint(checkpoint_path, checkpoint)
 
         epub.write_epub(output_path, book, {})
 

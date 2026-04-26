@@ -50,7 +50,16 @@ epub-corrector
 epub-corrector input.epub output.epub
 ```
 
-If `output` is omitted, it defaults to `<input-stem>_corrected.epub`.
+If `output` is omitted, it defaults to `output/<input-basename>`.  
+If `--checkpoint` is omitted, it defaults to `checkpoints/<input-stem>.json`.
+
+**Example with only an input path:**
+
+```bash
+epub-corrector "books/My Book.epub"
+# Output  → output/My Book.epub
+# Checkpoint → checkpoints/My Book.json
+```
 
 ---
 
@@ -62,6 +71,34 @@ If `output` is omitted, it defaults to `<input-stem>_corrected.epub`.
 4. The OpenAI-compatible endpoint is available at `http://127.0.0.1:1234/v1` by default.
 
 > The GUI can automatically fetch available models from the `/models` endpoint.
+
+---
+
+## Environment Variables (`.env`)
+
+Instead of passing `--base-url`, `--api-key`, and `--model` every time, you can set them in a `.env` file in the project root. CLI arguments always override `.env` values.
+
+Copy the example file and edit it:
+
+```bash
+cp .env.example .env
+```
+
+Supported variables:
+
+| Variable | Description | Default |
+|---|---|---|
+| `EPUB_CORRECTOR_BASE_URL` | OpenAI-compatible API endpoint | `http://127.0.0.1:1234/v1` |
+| `EPUB_CORRECTOR_API_KEY` | API key | `lm-studio` |
+| `EPUB_CORRECTOR_MODEL` | Model name | `local-model` |
+
+Example `.env`:
+
+```bash
+EPUB_CORRECTOR_BASE_URL=http://192.168.1.100:1234/v1
+EPUB_CORRECTOR_API_KEY=my-secret-key
+EPUB_CORRECTOR_MODEL=mistralai/ministral-3-3b
+```
 
 ---
 
@@ -114,11 +151,13 @@ epub-corrector --report changes.csv
 
 ## Resume / Checkpoint (`--checkpoint`)
 
-For very large EPUBs, save progress after each document so an interrupted run can continue where it left off:
+Progress is automatically checkpointed after each document. By default, the checkpoint is saved to `checkpoints/<input-stem>.json`. You can override the path explicitly:
 
 ```bash
 epub-corrector --checkpoint mybook.ckpt.json
 ```
+
+When using `--translate`, the language is appended to the auto-defaulted checkpoint name (e.g. `checkpoints/My Book_Spanish.json`).
 
 Re-run the exact same command after an interruption — already-processed documents are restored from the checkpoint and skipped. Delete the checkpoint file once the corrected EPUB is written successfully.
 
@@ -174,29 +213,102 @@ epub-corrector [input] [output] [options]
 
 positional arguments:
   input                           Input EPUB. Omit to pick from ./books/
-  output                          Output EPUB. Omit to auto-name as <input>_corrected.epub
+  output                          Output EPUB. Omit to default to output/<input-basename>
 
 options:
   --model MODEL                   Model name loaded in LM Studio (default: local-model)
   --base-url URL                  LM Studio base URL (default: http://127.0.0.1:1234/v1)
   --api-key KEY                   API key — LM Studio accepts any value (default: lm-studio)
   --temperature FLOAT             Generation temperature (default: 0.0)
-  --max-segments-per-request N    Max text segments per model call (default: 60)
+  --max-segments-per-request N    Max text segments per model call (default: 1)
   --max-chars-per-request N       Max characters per model call (default: 6000)
   --max-context N                 Number of previous segments to include as context (default: 0)
   --max-context-chars N           Maximum total characters of context per request (default: 3000)
   --conserve-context              Preserve context across documents/chapters instead of resetting per file
   --similarity-threshold FLOAT    Auto-reject edits below this similarity (default: 0.88)
   --max-change-ratio FLOAT        Auto-reject edits above this change ratio (default: 0.20)
+  --max-workers N                 Maximum concurrent model requests per batch (default: 1)
   --report PATH                   Write CSV change report to PATH
-  --checkpoint PATH               Checkpoint file for resume support
+  --checkpoint PATH               Checkpoint file for resume support. Defaults to checkpoints/<input-stem>.json
   --no-thinking                   Disable reasoning/thinking mode for supported models
   --schema                        Use structured JSON output to isolate corrected text from model commentary/reasoning
+  --rewrite [MODE]                Use the fiction-editor rewrite prompt instead of the strict grammar-only prompt. Pass 'aggressive' to disable safety filters.
+  --translate LANGUAGE            Translate the book into the specified language. Automatically sets --similarity-threshold 0.0 and --max-change-ratio 1.0
   --debug                         Print raw request/response payloads for every model call
   --verbose                       Enable verbose logging
 ```
 
 ---
+
+## Translation Mode (`--translate`)
+
+Translate the entire EPUB into any language while preserving all meaning, tone, style, names, places, numbers, dates, and formatting.
+
+```bash
+epub-corrector input.epub output.epub --translate Spanish
+```
+
+When `--translate` is used:
+- A literary-translator system prompt is sent to the model
+- `--similarity-threshold` is automatically set to `0.0`
+- `--max-change-ratio` is automatically set to `1.0`
+- The model receives `[TRANSLATE THIS]` markers instead of `[CORRECT THIS]`
+- Auto-defaulted output and checkpoint filenames append `_{language}` (spaces become underscores)
+
+> **Tip:** Translation works best with `--max-segments-per-request 1` (the default) so each paragraph is translated individually with full model attention.
+
+**Translation example with auto-named files:**
+
+```bash
+epub-corrector "books/My Book.epub" --translate "Spanish"
+# Output  → output/My Book_Spanish.epub
+# Checkpoint → checkpoints/My Book_Spanish.json
+```
+
+## Rewrite Mode (`--rewrite`)
+
+By default the tool uses a **strict grammar-only** prompt: the model may only fix grammar, punctuation, capitalization, and obvious typos. Sentence structure and phrasing must stay as close to the original as possible.
+
+Enable `--rewrite` to switch to a **fiction-editor** prompt aimed at translated literature. The model is explicitly allowed to:
+
+- Restructure awkward or unnatural sentences
+- Reorder clauses for better flow
+- Replace unnatural phrasing with idiomatic English equivalents
+
+It must still never change names, places, facts, numbers, dates, or meaning.
+
+```bash
+epub-corrector input.epub output.epub --rewrite
+```
+
+> **Important:** Rewrite mode produces much more aggressive edits than grammar-only mode. The default safety filters (`--similarity-threshold 0.88` and `--max-change-ratio 0.20`) are calibrated for conservative corrections and will auto-reject most valid rewrites. You should loosen them significantly when using `--rewrite`. See [Safety Filters](#safety-filters) below.
+
+### Aggressive rewrite (`--rewrite aggressive`)
+
+Pass `aggressive` to `--rewrite` to automatically disable all safety filters. This sets `--similarity-threshold 0` and `--max-change-ratio 1.0`, so every edit is presented for review instead of being auto-rejected.
+
+```bash
+epub-corrector input.epub output.epub --rewrite aggressive
+```
+
+## Safety Filters
+
+Two filters auto-reject edits before they ever reach review:
+
+| Filter | Default | What it does |
+|---|---|---|
+| `--similarity-threshold` | `0.88` | Rejects edits whose SequenceMatcher ratio is below this value. `1.0` = identical. |
+| `--max-change-ratio` | `0.20` | Rejects edits whose change ratio (`1.0 - similarity`) exceeds this value. |
+
+### Recommended thresholds for rewrite mode
+
+Because `--rewrite` intentionally restructures sentences, valid edits often score far below the defaults. A good starting point:
+
+```bash
+epub-corrector input.epub output.epub --rewrite --similarity-threshold 0.60 --max-change-ratio 0.50
+```
+
+If you find too many edits are still being auto-rejected, lower `--similarity-threshold` further (e.g., `0.50`) or raise `--max-change-ratio` (e.g., `0.70`). If you prefer to review every change manually without auto-rejection, set `--similarity-threshold 0.0 --max-change-ratio 1.0`.
 
 ## Structured Output (`--schema`)
 

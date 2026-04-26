@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
@@ -99,39 +100,111 @@ def _split_large_group(
     return result
 
 
-def _build_messages(text: str, context_texts: list[str] | None = None, no_thinking: bool = False, use_schema: bool = False) -> list[dict[str, str]]:
-    system = (
-        "You are a strict grammar and spelling corrector. "
-        "Correct only grammar, punctuation, capitalization, and obvious typos. "
-        "Do NOT change numbers, dates, entities, or formatting. "
-        "Do NOT under any circumstances change names, places, or any other factual information. "
-        "Do not change formatting, markup, or whitespace. "
-        "Adopt the tone of a professional fiction editor. Provide clean, flowing prose without bolding, and ensure the grammar follows standard novel-writing conventions. "
-        "Do not add or remove facts, style, tone, meaning, entities, numbers, chronology, or dialogue intent. "
-        "Do not summarize. Do not paraphrase unless required for grammar. "
-        "Preserve ALL quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear, including at the very start and very end of the text. "
-    )
-    if context_texts:
-        system += (
-            "The user will provide context paragraphs marked [CONTEXT] followed by a target paragraph marked [CORRECT THIS]. "
-            "Use the context only for reference (names, pronouns, terminology, style). "
-            "Correct ONLY the [CORRECT THIS] paragraph. "
-            "Return ONLY the corrected version of the [CORRECT THIS] paragraph, with no extra commentary, explanation, or formatting."
-        )
+_REWRITE_SYSTEM_PROMPT = (
+    "You are a professional fiction editor specializing in translated literature.\n\n"
+    "Your goal is to produce clean, natural, fluent English prose that reads as if it were written by a native English author — not translated.\n\n"
+    "You MAY:\n"
+    "- Restructure awkward or unnatural sentences\n"
+    "- Reorder clauses for better flow\n"
+    "- Replace unnatural phrasing with idiomatic English equivalents\n"
+    "- Correct grammar, punctuation, capitalization, and obvious typos\n\n"
+    "You must NEVER:\n"
+    "- Change names, places, or any factual information\n"
+    "- Add or remove facts, events, or details\n"
+    "- Change the meaning, tone, or intent of any sentence or dialogue\n"
+    "- Alter numbers, dates, or chronology\n"
+    "- Summarize or condense content\n"
+    "- Add commentary, notes, or explanations\n\n"
+    "Formatting rules:\n"
+    "- Preserve all quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear\n"
+    "- Do not alter markup, formatting structure, or whitespace\n"
+    "- Output clean prose only — no bolding, no annotations"
+)
+
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are a strict grammar and spelling corrector. "
+    "Correct only grammar, punctuation, capitalization, and obvious typos. "
+    "Do NOT change numbers, dates, entities, or formatting. "
+    "Do NOT under any circumstances change names, places, or any other factual information. "
+    "Do not change formatting, markup, or whitespace. "
+    "Adopt the tone of a professional fiction editor. Provide clean, flowing prose without bolding, and ensure the grammar follows standard novel-writing conventions. "
+    "Do not add or remove facts, style, tone, meaning, entities, numbers, chronology, or dialogue intent. "
+    "Do not summarize. Do not paraphrase unless required for grammar. "
+    "Preserve ALL quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear, including at the very start and very end of the text. "
+)
+
+_TRANSLATE_SYSTEM_PROMPT_TEMPLATE = (
+    "You are a professional literary translator.\n\n"
+    "Your task is to translate the provided text into {language}. "
+    "Preserve all meaning, tone, style, intent, and factual content exactly. "
+    "Do NOT change names, places, numbers, dates, or chronology. "
+    "Do NOT add or remove facts, events, or details. "
+    "Do NOT summarize or condense content. "
+    "Do NOT add commentary, notes, or explanations.\n\n"
+    "Formatting rules:\n"
+    "- Preserve all quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear\n"
+    "- Do not alter markup, formatting structure, or whitespace\n"
+    "- Output clean prose only — no bolding, no annotations"
+)
+
+
+def _build_messages(
+    text: str,
+    context_texts: list[str] | None = None,
+    no_thinking: bool = False,
+    use_schema: bool = False,
+    rewrite: bool = False,
+    translate: bool = False,
+    target_language: str | None = None,
+) -> list[dict[str, str]]:
+    if translate and target_language:
+        system = _TRANSLATE_SYSTEM_PROMPT_TEMPLATE.format(language=target_language)
     else:
-        system += "Return ONLY the corrected version of the text you are sent, with no extra commentary, explanation, or formatting."
+        system = _REWRITE_SYSTEM_PROMPT if rewrite else _DEFAULT_SYSTEM_PROMPT
+
+    if context_texts:
+        if translate and target_language:
+            system += (
+                " The user will provide context paragraphs marked [CONTEXT] followed by a target paragraph marked [TRANSLATE THIS]. "
+                "Use the context only for reference (names, pronouns, terminology, style). "
+                "Translate ONLY the [TRANSLATE THIS] paragraph. "
+                "Return ONLY the translated version of the [TRANSLATE THIS] paragraph, with no extra commentary, explanation, or formatting."
+            )
+        else:
+            system += (
+                " The user will provide context paragraphs marked [CONTEXT] followed by a target paragraph marked [CORRECT THIS]. "
+                "Use the context only for reference (names, pronouns, terminology, style). "
+                "Correct ONLY the [CORRECT THIS] paragraph. "
+                "Return ONLY the corrected version of the [CORRECT THIS] paragraph, with no extra commentary, explanation, or formatting."
+            )
+    else:
+        if translate and target_language:
+            system += " Return ONLY the translated version of the text you are sent, with no extra commentary, explanation, or formatting."
+        else:
+            system += " Return ONLY the corrected version of the text you are sent, with no extra commentary, explanation, or formatting."
+
     if use_schema:
-        system += (
-            " Respond with a JSON object containing a single key 'corrected_text' "
-            "whose value is the corrected text string. Do not include any other keys or commentary."
-        )
+        if translate and target_language:
+            system += (
+                " Respond with a JSON object containing a single key 'corrected_text' "
+                "whose value is the translated text string. Do not include any other keys or commentary."
+            )
+        else:
+            system += (
+                " Respond with a JSON object containing a single key 'corrected_text' "
+                "whose value is the corrected text string. Do not include any other keys or commentary."
+            )
     if no_thinking:
         system = "/no_think\n\n" + system
 
     user_parts: list[str] = []
     for ctx in context_texts or []:
         user_parts.append(f"[CONTEXT]\n{ctx}")
-    user_parts.append(f"[CORRECT THIS]\n{text}")
+
+    if translate and target_language:
+        user_parts.append(f"[TRANSLATE THIS]\n{text}")
+    else:
+        user_parts.append(f"[CORRECT THIS]\n{text}")
 
     return [
         {"role": "system", "content": system},
@@ -178,11 +251,20 @@ def _request_corrections(
     max_context: int = 0,
     max_context_chars: int = 0,
     previous_context: list[str] | None = None,
+    rewrite: bool = False,
+    translate: bool = False,
+    target_language: str | None = None,
+    max_workers: int = 1,
 ) -> list[str]:
     kwargs = {}
     if no_thinking:
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     if use_schema:
+        schema_description = (
+            "The translated text with the language changed while preserving all meaning, tone, and style."
+            if translate and target_language else
+            "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied."
+        )
         kwargs["response_format"] = {
             "type": "json_schema",
             "json_schema": {
@@ -192,7 +274,7 @@ def _request_corrections(
                     "properties": {
                         "corrected_text": {
                             "type": "string",
-                            "description": "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied.",
+                            "description": schema_description,
                         }
                     },
                     "required": ["corrected_text"],
@@ -202,8 +284,8 @@ def _request_corrections(
         }
 
     all_prior = list(previous_context or [])
-    results: list[str] = []
-    for i, text in enumerate(texts):
+    payloads: list[tuple[str, dict]] = []
+    for text in texts:
         context: list[str] = []
         if max_context > 0 and all_prior:
             candidates = all_prior[-max_context:] if len(all_prior) > max_context else list(all_prior)
@@ -214,13 +296,26 @@ def _request_corrections(
                 context.insert(0, ctx)
                 total_chars += len(ctx)
 
-        messages = _build_messages(text, context_texts=context or None, no_thinking=no_thinking, use_schema=use_schema)
+        messages = _build_messages(
+            text,
+            context_texts=context or None,
+            no_thinking=no_thinking,
+            use_schema=use_schema,
+            rewrite=rewrite,
+            translate=translate,
+            target_language=target_language,
+        )
         payload = {
             "model": model,
             "temperature": temperature,
             "messages": messages,
             **kwargs,
         }
+        payloads.append((text, payload))
+        all_prior.append(text)
+
+    def _do_single(item: tuple[str, dict]) -> str:
+        text, payload = item
         if debug:
             print("\n--- REQUEST PAYLOAD ---")
             print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -242,9 +337,7 @@ def _request_corrections(
                     print("--- END RESPONSE ---\n")
                 corrected = _extract_correction(content, use_schema=use_schema)
                 corrected = _restore_boundary_punctuation(text, corrected)
-                results.append(corrected)
-                all_prior.append(text)
-                break
+                return corrected
             except Exception as exc:
                 logging.warning("Model request failed (attempt %d/%d): %s", attempt, max_retries, exc)
                 last_exc = exc
@@ -253,7 +346,11 @@ def _request_corrections(
                     continue
                 raise last_exc
 
-    return results
+    if max_workers <= 1:
+        return [_do_single(item) for item in payloads]
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(_do_single, payloads))
 
 
 def _change_is_safe(
@@ -340,6 +437,10 @@ def _process_document(
     max_context: int = 0,
     max_context_chars: int = 0,
     previous_context: list[str] | None = None,
+    rewrite: bool = False,
+    translate: bool = False,
+    target_language: str | None = None,
+    max_workers: int = 1,
 ) -> list[str]:
     raw = item.get_content()
     soup = BeautifulSoup(raw, "xml")
@@ -366,6 +467,10 @@ def _process_document(
                 no_thinking=no_thinking, debug=debug, use_schema=use_schema,
                 max_context=max_context, max_context_chars=max_context_chars,
                 previous_context=recent_context,
+                rewrite=rewrite,
+                translate=translate,
+                target_language=target_language,
+                max_workers=max_workers,
             )
         except Exception as exc:
             stats.failed_groups += 1
@@ -426,6 +531,10 @@ def _process_document(
                             no_thinking=no_thinking, debug=debug, use_schema=use_schema,
                             max_context=max_context, max_context_chars=max_context_chars,
                             previous_context=recent_context,
+                            rewrite=rewrite,
+                            translate=translate,
+                            target_language=target_language,
+                            max_workers=max_workers,
                         )
                     except Exception as exc:
                         stats.failed_groups += 1

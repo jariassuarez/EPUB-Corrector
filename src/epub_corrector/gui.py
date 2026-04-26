@@ -14,8 +14,15 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from dotenv import load_dotenv
 from ebooklib import epub
 from openai import OpenAI
+
+load_dotenv()
+
+_DEFAULT_BASE_URL = os.environ.get("EPUB_CORRECTOR_BASE_URL", "http://localhost:1234/v1")
+_DEFAULT_API_KEY = os.environ.get("EPUB_CORRECTOR_API_KEY", "lm-studio")
+_DEFAULT_MODEL = os.environ.get("EPUB_CORRECTOR_MODEL", "local-model")
 
 from .core import (
     ChangeRecord,
@@ -104,18 +111,18 @@ class EpubCorrectorGui:
         server_frame.pack(fill=tk.X, padx=10, pady=5)
 
         ttk.Label(server_frame, text="Base URL:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
-        self.base_url_var = tk.StringVar(value="http://localhost:1234/v1")
+        self.base_url_var = tk.StringVar(value=_DEFAULT_BASE_URL)
         ttk.Entry(server_frame, textvariable=self.base_url_var, width=50).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
 
         ttk.Label(server_frame, text="API Key:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
-        self.api_key_var = tk.StringVar(value="lm-studio")
+        self.api_key_var = tk.StringVar(value=_DEFAULT_API_KEY)
         self.api_key_entry = ttk.Entry(server_frame, textvariable=self.api_key_var, width=50, show="*")
         self.api_key_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
         self.show_key_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(server_frame, text="Show", variable=self.show_key_var, command=self._toggle_key_visibility).grid(row=1, column=2, sticky="w")
 
         ttk.Label(server_frame, text="Model:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
-        self.model_var = tk.StringVar(value="local-model")
+        self.model_var = tk.StringVar(value=_DEFAULT_MODEL)
         self.model_combo = ttk.Combobox(server_frame, textvariable=self.model_var, width=48)
         self.model_combo.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
         ttk.Button(server_frame, text="Refresh Models", command=self._refresh_models).grid(row=2, column=2, padx=5)
@@ -128,12 +135,13 @@ class EpubCorrectorGui:
 
         opts = [
             ("Temperature", self._float_var(0.0)),
-            ("Max segments / request", self._int_var(60)),
+            ("Max segments / request", self._int_var(1)),
             ("Max chars / request", self._int_var(6000)),
             ("Similarity threshold", self._float_var(0.88)),
             ("Max change ratio", self._float_var(0.20)),
             ("Max context segments", self._int_var(0)),
             ("Max context chars", self._int_var(3000)),
+            ("Max workers", self._int_var(1)),
         ]
         self.option_vars: dict[str, tk.Variable] = {}
         for i, (label, var) in enumerate(opts):
@@ -144,9 +152,15 @@ class EpubCorrectorGui:
             ent.grid(row=row, column=col + 1, sticky="w", padx=5, pady=2)
             self.option_vars[label] = var
 
+        # Translate field (spanning full width below the grid)
+        translate_row = (len(opts) + 1) // 2
+        ttk.Label(opts_frame, text="Translate to:").grid(row=translate_row, column=0, sticky="w", padx=5, pady=2)
+        self.translate_var = tk.StringVar()
+        ttk.Entry(opts_frame, textvariable=self.translate_var, width=30).grid(row=translate_row, column=1, columnspan=3, sticky="w", padx=5, pady=2)
+
         # Checkboxes
         cb_frame = ttk.Frame(opts_frame)
-        cb_row = (len(opts) + 1) // 2
+        cb_row = translate_row + 1
         cb_frame.grid(row=cb_row, column=0, columnspan=4, sticky="w", pady=(5, 0))
         self.no_thinking_var = tk.BooleanVar(value=False)
         self.debug_var = tk.BooleanVar(value=False)
@@ -154,6 +168,9 @@ class EpubCorrectorGui:
         self.auto_accept_var = tk.BooleanVar(value=False)
         self.schema_var = tk.BooleanVar(value=False)
         self.conserve_context_var = tk.BooleanVar(value=False)
+        self.rewrite_var = tk.BooleanVar(value=False)
+        self.aggressive_var = tk.BooleanVar(value=False)
+        self.aggressive_var.trace_add("write", self._on_aggressive_toggle)
         self.auto_accept_var.trace_add("write", self._on_auto_accept_toggle)
         ttk.Checkbutton(cb_frame, text="No thinking", variable=self.no_thinking_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Schema", variable=self.schema_var).pack(side=tk.LEFT, padx=5)
@@ -161,6 +178,8 @@ class EpubCorrectorGui:
         ttk.Checkbutton(cb_frame, text="Verbose", variable=self.verbose_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Auto-accept all", variable=self.auto_accept_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Conserve context", variable=self.conserve_context_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(cb_frame, text="Rewrite", variable=self.rewrite_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(cb_frame, text="Aggressive", variable=self.aggressive_var).pack(side=tk.LEFT, padx=5)
 
         # --- Files ---
         files_frame = ttk.LabelFrame(self.scrollable_frame, text="Files", padding=10)
@@ -355,6 +374,10 @@ class EpubCorrectorGui:
     def _on_auto_accept_toggle(self, *args: Any) -> None:
         self.review_state.auto_accept = self.auto_accept_var.get()
 
+    def _on_aggressive_toggle(self, *args: Any) -> None:
+        if self.aggressive_var.get():
+            self.rewrite_var.set(True)
+
     def _on_review_action(self, action: str) -> None:
         if not self._review_pending:
             return
@@ -433,6 +456,8 @@ class EpubCorrectorGui:
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
 
+        translate_lang = self.translate_var.get().strip() or None
+
         self.worker_thread = threading.Thread(
             target=self._worker,
             kwargs={
@@ -446,6 +471,10 @@ class EpubCorrectorGui:
                 "max_context": self._get_option("Max context segments", int),
                 "max_context_chars": self._get_option("Max context chars", int),
                 "conserve_context": self.conserve_context_var.get(),
+                "rewrite": self.rewrite_var.get(),
+                "aggressive": self.aggressive_var.get(),
+                "translate": translate_lang,
+                "max_workers": self._get_option("Max workers", int),
             },
             daemon=True,
         )
@@ -467,6 +496,10 @@ class EpubCorrectorGui:
         max_context: int,
         max_context_chars: int,
         conserve_context: bool,
+        rewrite: bool = False,
+        aggressive: bool = False,
+        translate: str | None = None,
+        max_workers: int = 1,
     ) -> None:
         try:
             level = logging.INFO if self.verbose_var.get() else logging.WARNING
@@ -489,6 +522,10 @@ class EpubCorrectorGui:
                     print(f"Resuming from checkpoint: {len(checkpoint)} document(s) already processed.")
 
             conserved_context: list[str] = []
+
+            is_translate = bool(translate)
+            similarity_threshold = 0.0 if (is_translate or aggressive) else similarity
+            max_change_ratio = 1.0 if (is_translate or aggressive) else max_change
 
             for item in self._iter_document_items(book):
                 if self.stop_requested:
@@ -515,8 +552,8 @@ class EpubCorrectorGui:
                     temperature=temperature,
                     max_segments_per_request=max_segments,
                     max_chars_per_request=max_chars,
-                    similarity_threshold=similarity,
-                    max_change_ratio=max_change,
+                    similarity_threshold=similarity_threshold,
+                    max_change_ratio=max_change_ratio,
                     stats=stats,
                     records=records,
                     review=self.review_state,
@@ -527,6 +564,10 @@ class EpubCorrectorGui:
                     max_context=max_context,
                     max_context_chars=max_context_chars,
                     previous_context=conserved_context if conserve_context else None,
+                    rewrite=rewrite,
+                    translate=is_translate,
+                    target_language=translate,
+                    max_workers=max_workers,
                 )
 
                 if checkpoint_path:
