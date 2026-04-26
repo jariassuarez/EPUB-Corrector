@@ -99,7 +99,7 @@ def _split_large_group(
     return result
 
 
-def _build_messages(text: str, no_thinking: bool = False, use_schema: bool = False) -> list[dict[str, str]]:
+def _build_messages(text: str, context_texts: list[str] | None = None, no_thinking: bool = False, use_schema: bool = False) -> list[dict[str, str]]:
     system = (
         "You are a strict grammar and spelling corrector. "
         "Correct only grammar, punctuation, capitalization, and obvious typos. "
@@ -110,8 +110,16 @@ def _build_messages(text: str, no_thinking: bool = False, use_schema: bool = Fal
         "Do not add or remove facts, style, tone, meaning, entities, numbers, chronology, or dialogue intent. "
         "Do not summarize. Do not paraphrase unless required for grammar. "
         "Preserve ALL quotation marks, apostrophes, dashes, and ellipsis characters exactly where they appear, including at the very start and very end of the text. "
-        "Return ONLY the corrected version of the text you are sent, with no extra commentary, explanation, or formatting."
     )
+    if context_texts:
+        system += (
+            "The user will provide context paragraphs marked [CONTEXT] followed by a target paragraph marked [CORRECT THIS]. "
+            "Use the context only for reference (names, pronouns, terminology, style). "
+            "Correct ONLY the [CORRECT THIS] paragraph. "
+            "Return ONLY the corrected version of the [CORRECT THIS] paragraph, with no extra commentary, explanation, or formatting."
+        )
+    else:
+        system += "Return ONLY the corrected version of the text you are sent, with no extra commentary, explanation, or formatting."
     if use_schema:
         system += (
             " Respond with a JSON object containing a single key 'corrected_text' "
@@ -119,9 +127,15 @@ def _build_messages(text: str, no_thinking: bool = False, use_schema: bool = Fal
         )
     if no_thinking:
         system = "/no_think\n\n" + system
+
+    user_parts: list[str] = []
+    for ctx in context_texts or []:
+        user_parts.append(f"[CONTEXT]\n{ctx}")
+    user_parts.append(f"[CORRECT THIS]\n{text}")
+
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": text},
+        {"role": "user", "content": "\n\n".join(user_parts)},
     ]
 
 
@@ -161,6 +175,9 @@ def _request_corrections(
     client: OpenAI, model: str, texts: list[str], temperature: float,
     no_thinking: bool = False, debug: bool = False, max_retries: int = 3,
     use_schema: bool = False,
+    max_context: int = 0,
+    max_context_chars: int = 0,
+    previous_context: list[str] | None = None,
 ) -> list[str]:
     kwargs = {}
     if no_thinking:
@@ -184,12 +201,24 @@ def _request_corrections(
             },
         }
 
+    all_prior = list(previous_context or [])
     results: list[str] = []
-    for text in texts:
+    for i, text in enumerate(texts):
+        context: list[str] = []
+        if max_context > 0 and all_prior:
+            candidates = all_prior[-max_context:] if len(all_prior) > max_context else list(all_prior)
+            total_chars = 0
+            for ctx in reversed(candidates):
+                if max_context_chars > 0 and total_chars + len(ctx) > max_context_chars:
+                    break
+                context.insert(0, ctx)
+                total_chars += len(ctx)
+
+        messages = _build_messages(text, context_texts=context or None, no_thinking=no_thinking, use_schema=use_schema)
         payload = {
             "model": model,
             "temperature": temperature,
-            "messages": _build_messages(text, no_thinking=no_thinking, use_schema=use_schema),
+            "messages": messages,
             **kwargs,
         }
         if debug:
@@ -214,6 +243,7 @@ def _request_corrections(
                 corrected = _extract_correction(content, use_schema=use_schema)
                 corrected = _restore_boundary_punctuation(text, corrected)
                 results.append(corrected)
+                all_prior.append(text)
                 break
             except Exception as exc:
                 logging.warning("Model request failed (attempt %d/%d): %s", attempt, max_retries, exc)
@@ -301,6 +331,8 @@ def _process_document(
     no_thinking: bool = False,
     debug: bool = False,
     use_schema: bool = False,
+    max_context: int = 0,
+    max_context_chars: int = 0,
 ) -> None:
     raw = item.get_content()
     soup = BeautifulSoup(raw, "xml")
@@ -310,6 +342,7 @@ def _process_document(
         return
 
     stats.docs_seen += 1
+    recent_context: list[str] = []
 
     for batch_idx, batch in enumerate(_split_large_group(
         segments,
@@ -324,6 +357,8 @@ def _process_document(
             corrected = _request_corrections(
                 client=client, model=model, texts=originals, temperature=temperature,
                 no_thinking=no_thinking, debug=debug, use_schema=use_schema,
+                max_context=max_context, max_context_chars=max_context_chars,
+                previous_context=recent_context,
             )
         except Exception as exc:
             stats.failed_groups += 1
@@ -382,6 +417,8 @@ def _process_document(
                         corrected = _request_corrections(
                             client=client, model=model, texts=originals, temperature=temperature,
                             no_thinking=no_thinking, debug=debug, use_schema=use_schema,
+                            max_context=max_context, max_context_chars=max_context_chars,
+                            previous_context=recent_context,
                         )
                     except Exception as exc:
                         stats.failed_groups += 1
@@ -407,6 +444,10 @@ def _process_document(
                     accepted=True,
                 ))
             seg_idx += 1
+
+        if max_context > 0:
+            recent_context.extend(originals)
+            recent_context = recent_context[-max_context:]
 
     item.set_content(str(soup).encode("utf-8"))
 

@@ -277,6 +277,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Hard character budget per model request.",
     )
     parser.add_argument(
+        "--max-context", type=int, default=0,
+        help="Number of previous text segments to include as context for each correction. 0 disables context.",
+    )
+    parser.add_argument(
+        "--max-context-chars", type=int, default=3000,
+        help="Maximum total characters of context to send per request.",
+    )
+    parser.add_argument(
         "--similarity-threshold", type=float, default=0.88,
         help="Auto-reject edits below this sequence similarity.",
     )
@@ -357,6 +365,8 @@ def run(args: argparse.Namespace) -> int:
             no_thinking=args.no_thinking,
             debug=args.debug,
             use_schema=args.schema,
+            max_context=args.max_context,
+            max_context_chars=args.max_context_chars,
         )
 
         if args.checkpoint:

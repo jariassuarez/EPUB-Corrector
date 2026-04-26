@@ -140,6 +140,8 @@ options:
   --temperature FLOAT             Generation temperature (default: 0.0)
   --max-segments-per-request N    Max text segments per model call (default: 60)
   --max-chars-per-request N       Max characters per model call (default: 6000)
+  --max-context N                 Number of previous segments to include as context (default: 0)
+  --max-context-chars N           Maximum total characters of context per request (default: 3000)
   --similarity-threshold FLOAT    Auto-reject edits below this similarity (default: 0.88)
   --max-change-ratio FLOAT        Auto-reject edits above this change ratio (default: 0.20)
   --report PATH                   Write CSV change report to PATH
@@ -190,3 +192,12 @@ python build_exe.py
 ```
 
 The resulting executable will be at `dist/epub-corrector-gui.exe`.
+
+---
+
+## Models Tested
+
+| Model | Structured Output | Thinking | Notes |
+|---|---|---|---|
+| `mistralai/ministral-3-3b` | No | No | Works very well, useful for PCs with not very powerful GPUs |
+| `google/gemma-4-e4b` | Yes | No | Works extremely well and fast, requires more VRAM |

@@ -131,6 +131,8 @@ class EpubCorrectorGui:
             ("Max chars / request", self._int_var(6000)),
             ("Similarity threshold", self._float_var(0.88)),
             ("Max change ratio", self._float_var(0.20)),
+            ("Max context segments", self._int_var(0)),
+            ("Max context chars", self._int_var(3000)),
         ]
         self.option_vars: dict[str, tk.Variable] = {}
         for i, (label, var) in enumerate(opts):
@@ -143,7 +145,8 @@ class EpubCorrectorGui:
 
         # Checkboxes
         cb_frame = ttk.Frame(opts_frame)
-        cb_frame.grid(row=3, column=0, columnspan=4, sticky="w", pady=(5, 0))
+        cb_row = (len(opts) + 1) // 2
+        cb_frame.grid(row=cb_row, column=0, columnspan=4, sticky="w", pady=(5, 0))
         self.no_thinking_var = tk.BooleanVar(value=False)
         self.debug_var = tk.BooleanVar(value=False)
         self.verbose_var = tk.BooleanVar(value=False)
@@ -437,6 +440,8 @@ class EpubCorrectorGui:
                 "max_chars": max_chars,
                 "similarity": similarity,
                 "max_change": max_change,
+                "max_context": self._get_option("Max context segments", int),
+                "max_context_chars": self._get_option("Max context chars", int),
             },
             daemon=True,
         )
@@ -455,6 +460,8 @@ class EpubCorrectorGui:
         max_chars: int,
         similarity: float,
         max_change: float,
+        max_context: int,
+        max_context_chars: int,
     ) -> None:
         try:
             level = logging.INFO if self.verbose_var.get() else logging.WARNING
@@ -505,6 +512,8 @@ class EpubCorrectorGui:
                     no_thinking=self.no_thinking_var.get(),
                     debug=self.debug_var.get(),
                     use_schema=self.schema_var.get(),
+                    max_context=max_context,
+                    max_context_chars=max_context_chars,
                 )
 
                 if checkpoint_path:
