@@ -163,6 +163,25 @@ Re-run the exact same command after an interruption — already-processed docume
 
 ---
 
+## Processing a Range of Documents (`--from` / `--to`)
+
+Process only a specific range of HTML files (chapters) within the EPUB, using 1-based indices:
+
+```bash
+# Process only documents 5 through 10
+epub-corrector input.epub output.epub --from 5 --to 10
+
+# Process from document 3 to the end
+epub-corrector input.epub output.epub --from 3
+
+# Process only the first 5 documents
+epub-corrector input.epub output.epub --to 5
+```
+
+Documents outside the range are skipped entirely — they are not written to the output EPUB and are not added to context. Both flags are optional and can be used independently.
+
+---
+
 ## Context and Cross-Chapter Memory
 
 By default, each HTML file (chapter) in the EPUB is processed in isolation. The model sees only the text in the current batch, plus any earlier paragraphs from the **same** chapter. This keeps memory usage low, but the model has no memory of what happened in previous chapters.
@@ -231,9 +250,15 @@ options:
   --report PATH                   Write CSV change report to PATH
   --checkpoint PATH               Checkpoint file for resume support. Defaults to checkpoints/<input-stem>.json
   --no-thinking                   Disable reasoning/thinking mode for supported models
-  --schema                        Use structured JSON output to isolate corrected text from model commentary/reasoning
+  --no-schema                     Disable structured JSON output (enabled by default)
   --rewrite [MODE]                Use the fiction-editor rewrite prompt instead of the strict grammar-only prompt. Pass 'aggressive' to disable safety filters.
   --translate LANGUAGE            Translate the book into the specified language. Automatically sets --similarity-threshold 0.0 and --max-change-ratio 1.0
+  --from N                        Start processing from the Nth HTML document (1-based). Documents before N are skipped.
+  --to N                          Stop after the Nth HTML document (1-based, inclusive). Documents after N are skipped.
+  --glossary [INPUT_FILE]         Extract a glossary of proper nouns and special terms (standalone — does not correct). Saved to glossaries/<stem>_glossary.json
+  --glossary-context-length N     Characters per chunk sent to the LLM during glossary extraction (default: 20000)
+  --summarize-glossary PATH       Send a glossary JSON to the LLM to remove meaningless entries. Overwrites the file in-place
+  --input-glossary PATH           Glossary JSON to inject into the system prompt so the model preserves those terms exactly
   --debug                         Print raw request/response payloads for every model call
   --verbose                       Enable verbose logging
 ```
@@ -310,22 +335,22 @@ epub-corrector input.epub output.epub --rewrite --similarity-threshold 0.60 --ma
 
 If you find too many edits are still being auto-rejected, lower `--similarity-threshold` further (e.g., `0.50`) or raise `--max-change-ratio` (e.g., `0.70`). If you prefer to review every change manually without auto-rejection, set `--similarity-threshold 0.0 --max-change-ratio 1.0`.
 
-## Structured Output (`--schema`)
+## Structured Output (enabled by default, `--no-schema` to disable)
 
-Some models (e.g., Gemma 4, DeepSeek-R1, or any model configured with reasoning/thinking) emit internal reasoning or commentary before the actual corrected text. This can leak into the EPUB and corrupt the output.
+Structured JSON output is **on by default**. The tool forces the model to return a JSON object with a single `corrected_text` field, which it then extracts automatically. This prevents internal reasoning or commentary from leaking into the EPUB output — a common problem with models that think out loud or emit `<think>` blocks.
 
-Enable `--schema` to force the model to return a JSON object with a single `corrected_text` field, which the tool then extracts automatically:
-
-```bash
-epub-corrector input.epub output.epub --schema
-```
-
-When `--schema` is enabled:
-- The API receives `response_format={"type": "json_object"}`
-- The system prompt is extended to instruct the model to return only `{"corrected_text": "..."}`
+When structured output is active:
+- The API receives `response_format={"type": "json_schema"}` with a strict schema
+- The system prompt instructs the model to return only `{"corrected_text": "..."}`
 - The tool parses the JSON response and extracts the text, discarding any surrounding commentary
 
-Recommended for models that yap, think out loud, or include `<think>` blocks in their output.
+To disable (e.g., for models that don't support structured output):
+
+```bash
+epub-corrector input.epub output.epub --no-schema
+```
+
+The glossary extraction feature uses its own separate JSON schema with five array fields (`names`, `places`, `organizations`, `terms`, `other`) to guarantee a well-formed response.
 
 ## Recommended Settings for Long EPUBs
 
@@ -334,6 +359,117 @@ epub-corrector \
   --similarity-threshold 0.90 \
   --max-change-ratio 0.15 \
   --checkpoint progress.json
+```
+
+---
+
+## Glossary Extraction (`--glossary`)
+
+Build a glossary of important terms from your EPUB before correcting it. The glossary mode scans the entire book and asks the model to identify names, places, organizations, special terms, and any other words that have specific capitalization or spelling that must be preserved — including informal nicknames and epithets like "Alluring Castle" or "the Iron Giant".
+
+```bash
+epub-corrector --glossary "books/My Book.epub"
+# Output: glossaries/My Book_glossary.json
+```
+
+You can also omit the path if you specify the input EPUB as the positional argument:
+
+```bash
+epub-corrector "books/My Book.epub" --glossary
+```
+
+The output is a JSON file saved to the `glossaries/` folder:
+
+```json
+{
+  "names":         ["Elara", "Kael"],
+  "places":        ["Alluring Castle", "Ashenvale City"],
+  "organizations": ["Iron Council"],
+  "terms":         ["Aetherbinding"],
+  "other":         ["The Reckoning"]
+}
+```
+
+By default each chunk sent to the model is 20 000 characters. Increase it for faster extraction on long books, decrease it if your model has a small context window:
+
+```bash
+epub-corrector --glossary "books/My Book.epub" --glossary-context-length 40000
+```
+
+The JSON file can be edited by hand before use — add entries, remove false positives, or fix canonical spellings.
+
+A dedicated JSON schema (`glossary_extraction`) is used for the extraction request, so the model always returns a valid, well-structured response.
+
+## Glossary Summarization (`--summarize-glossary`)
+
+Automated extraction can produce noisy results — website navigation artifacts, raw HTML tags, generic level numbers, real-world brand names, and stat-dump strings. Use `--summarize-glossary` to send an existing glossary to the LLM and ask it to remove the noise, keeping only entries that are genuinely meaningful for consistency.
+
+```bash
+epub-corrector --summarize-glossary "glossaries/My Book_glossary.json"
+```
+
+The file is overwritten in-place. The command prints a before/after term count so you can see what was removed:
+
+```
+Summarizing glossary: glossaries/My Book_glossary.json (142 terms)
+Done. 142 → 98 terms (44 removed). Saved to glossaries/My Book_glossary.json
+```
+
+Typical entries removed:
+- Website artifacts: `< report chapter >`
+- HTML/format strings: `html`
+- Generic sequential labels: `Level 0`, `Level 1`, …
+- Out-of-place real-world products: `iPhone 12`
+- Stat-dump strings: `Strength 5, Agility 3, Endurance 4`
+- Cross-category duplicates (kept only in the most specific category)
+
+The recommended workflow is:
+
+```bash
+# Step 1: extract
+epub-corrector --glossary "books/My Book.epub"
+
+# Step 2: summarize (remove noise)
+epub-corrector --summarize-glossary "glossaries/My Book_glossary.json"
+
+# Step 3: review / edit the cleaned glossary by hand if needed
+
+# Step 4: correct with the glossary active
+epub-corrector "books/My Book.epub" output/corrected.epub \
+  --input-glossary "glossaries/My Book_glossary.json"
+```
+
+## Glossary-Guided Correction (`--input-glossary`)
+
+Pass a glossary file to any correction run to tell the model exactly which terms must be preserved and how they should be capitalized:
+
+```bash
+# Step 1: extract
+epub-corrector --glossary "books/My Book.epub"
+
+# Step 2: review / edit glossaries/My Book_glossary.json as needed
+
+# Step 3: correct with the glossary active
+epub-corrector "books/My Book.epub" output/corrected.epub \
+  --input-glossary "glossaries/My Book_glossary.json"
+```
+
+Works with all modes — grammar correction, rewrite, and translation:
+
+```bash
+epub-corrector "books/My Book.epub" output/spanish.epub \
+  --translate Spanish \
+  --input-glossary "glossaries/My Book_glossary.json"
+```
+
+The glossary terms are injected into the system prompt as:
+
+```
+The following terms appear in this text and must be preserved exactly as written
+(including capitalization and spelling):
+Names: Elara, Kael
+Places: Alluring Castle, Ashenvale City
+...
 ```
 
 ---

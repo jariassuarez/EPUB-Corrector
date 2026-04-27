@@ -37,6 +37,12 @@ from .core import (
     _save_checkpoint,
     _write_csv_report,
 )
+from .glossary import (
+    extract_glossary,
+    format_glossary_injection,
+    load_glossary,
+    summarize_glossary,
+)
 
 DEFAULT_FONT = ("TkDefaultFont", 10)
 
@@ -165,22 +171,31 @@ class EpubCorrectorGui:
         self.translate_var = tk.StringVar()
         ttk.Entry(opts_frame, textvariable=self.translate_var, width=30).grid(row=translate_row, column=1, columnspan=3, sticky="w", padx=5, pady=2)
 
+        # From / To document range
+        range_row = translate_row + 1
+        ttk.Label(opts_frame, text="From doc #:").grid(row=range_row, column=0, sticky="w", padx=5, pady=2)
+        self.from_doc_var = tk.StringVar()
+        ttk.Entry(opts_frame, textvariable=self.from_doc_var, width=8).grid(row=range_row, column=1, sticky="w", padx=5, pady=2)
+        ttk.Label(opts_frame, text="To doc #:").grid(row=range_row, column=2, sticky="w", padx=5, pady=2)
+        self.to_doc_var = tk.StringVar()
+        ttk.Entry(opts_frame, textvariable=self.to_doc_var, width=8).grid(row=range_row, column=3, sticky="w", padx=5, pady=2)
+
         # Checkboxes
         cb_frame = ttk.Frame(opts_frame)
-        cb_row = translate_row + 1
+        cb_row = range_row + 1
         cb_frame.grid(row=cb_row, column=0, columnspan=4, sticky="w", pady=(5, 0))
         self.no_thinking_var = tk.BooleanVar(value=False)
         self.debug_var = tk.BooleanVar(value=False)
         self.verbose_var = tk.BooleanVar(value=False)
         self.auto_accept_var = tk.BooleanVar(value=False)
-        self.schema_var = tk.BooleanVar(value=False)
+        self.no_schema_var = tk.BooleanVar(value=False)
         self.conserve_context_var = tk.BooleanVar(value=False)
         self.rewrite_var = tk.BooleanVar(value=False)
         self.aggressive_var = tk.BooleanVar(value=False)
         self.aggressive_var.trace_add("write", self._on_aggressive_toggle)
         self.auto_accept_var.trace_add("write", self._on_auto_accept_toggle)
         ttk.Checkbutton(cb_frame, text="No thinking", variable=self.no_thinking_var).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(cb_frame, text="Schema", variable=self.schema_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(cb_frame, text="No schema", variable=self.no_schema_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Debug", variable=self.debug_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Verbose", variable=self.verbose_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Auto-accept all", variable=self.auto_accept_var).pack(side=tk.LEFT, padx=5)
@@ -208,6 +223,41 @@ class EpubCorrectorGui:
             ttk.Button(files_frame, text="Browse...", command=cmd).grid(row=i, column=2, padx=5)
 
         files_frame.columnconfigure(1, weight=1)
+
+        # --- Glossary ---
+        glossary_frame = ttk.LabelFrame(self.scrollable_frame, text="Glossary", padding=10)
+        glossary_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.glossary_mode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            glossary_frame,
+            text="Extract glossary only (standalone mode — does not correct the book)",
+            variable=self.glossary_mode_var,
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=5, pady=2)
+
+        ttk.Label(glossary_frame, text="Context length (chars):").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.glossary_context_length_var = tk.IntVar(value=20000)
+        ttk.Entry(glossary_frame, textvariable=self.glossary_context_length_var, width=12).grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        ttk.Label(glossary_frame, text="Save glossary to:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        self.glossary_output_var = tk.StringVar()
+        ttk.Entry(glossary_frame, textvariable=self.glossary_output_var, width=50).grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+        ttk.Button(glossary_frame, text="Browse...", command=self._browse_glossary_output).grid(row=2, column=2, padx=5)
+
+        ttk.Label(glossary_frame, text="Input glossary (optional):").grid(row=3, column=0, sticky="w", padx=5, pady=2)
+        self.input_glossary_var = tk.StringVar()
+        ttk.Entry(glossary_frame, textvariable=self.input_glossary_var, width=50).grid(row=3, column=1, sticky="ew", padx=5, pady=2)
+        ttk.Button(glossary_frame, text="Browse...", command=self._browse_input_glossary).grid(row=3, column=2, padx=5)
+
+        ttk.Label(glossary_frame, text="Summarize glossary:").grid(row=4, column=0, sticky="w", padx=5, pady=2)
+        self.summarize_glossary_var = tk.StringVar()
+        ttk.Entry(glossary_frame, textvariable=self.summarize_glossary_var, width=50).grid(row=4, column=1, sticky="ew", padx=5, pady=2)
+        sum_btn_frame = ttk.Frame(glossary_frame)
+        sum_btn_frame.grid(row=4, column=2, padx=5, sticky="w")
+        ttk.Button(sum_btn_frame, text="Browse...", command=self._browse_summarize_glossary).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(sum_btn_frame, text="Summarize", command=self._start_summarize_glossary).pack(side=tk.LEFT)
+
+        glossary_frame.columnconfigure(1, weight=1)
 
         # --- Actions ---
         action_frame = ttk.Frame(self.scrollable_frame)
@@ -237,6 +287,12 @@ class EpubCorrectorGui:
                 self.output_path_var.set(
                     os.path.splitext(path)[0] + "_corrected.epub"
                 )
+            if not self.glossary_output_var.get():
+                stem = os.path.splitext(os.path.basename(path))[0]
+                os.makedirs("glossaries", exist_ok=True)
+                self.glossary_output_var.set(
+                    os.path.join("glossaries", f"{stem}_glossary.json")
+                )
 
     def _browse_output(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -258,6 +314,68 @@ class EpubCorrectorGui:
         )
         if path:
             self.report_var.set(path)
+
+    def _browse_glossary_output(self) -> None:
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if path:
+            self.glossary_output_var.set(path)
+
+    def _browse_input_glossary(self) -> None:
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if path:
+            self.input_glossary_var.set(path)
+
+    def _browse_summarize_glossary(self) -> None:
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if path:
+            self.summarize_glossary_var.set(path)
+
+    def _start_summarize_glossary(self) -> None:
+        gpath = self.summarize_glossary_var.get().strip()
+        if not gpath:
+            messagebox.showerror("Missing path", "Please select a glossary file to summarize.")
+            return
+        if not os.path.isfile(gpath):
+            messagebox.showerror("File not found", f"Glossary file not found:\n{gpath}")
+            return
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.stop_event.clear()
+        t = threading.Thread(target=self._worker_summarize_glossary, args=(gpath,), daemon=True)
+        t.start()
+
+    def _worker_summarize_glossary(self, gpath: str) -> None:
+        try:
+            glossary_data = load_glossary(gpath)
+            before_total = sum(len(v) for v in glossary_data.values())
+            print(f"Summarizing glossary: {gpath} ({before_total} terms)")
+            client = OpenAI(
+                base_url=self.base_url_var.get().strip(),
+                api_key=self.api_key_var.get().strip(),
+            )
+            cleaned = summarize_glossary(
+                glossary=glossary_data,
+                client=client,
+                model=self.model_var.get().strip(),
+                temperature=0.0,
+                no_thinking=self.no_thinking_var.get(),
+                debug=self.debug_var.get(),
+            )
+            after_total = sum(len(v) for v in cleaned.values())
+            with open(gpath, "w", encoding="utf-8") as f:
+                json.dump(cleaned, f, ensure_ascii=False, indent=2)
+            print(f"Done. {before_total} → {after_total} terms ({before_total - after_total} removed). Saved to {gpath}")
+        except Exception as exc:
+            print(f"ERROR: {exc}")
+        finally:
+            self.root.after(0, self._on_worker_done)
 
     def _refresh_models(self) -> None:
         try:
@@ -482,6 +600,12 @@ class EpubCorrectorGui:
                 "aggressive": self.aggressive_var.get(),
                 "translate": translate_lang,
                 "max_workers": self._get_option("Max workers", int),
+                "glossary_mode": self.glossary_mode_var.get(),
+                "glossary_context_length": self.glossary_context_length_var.get(),
+                "glossary_output": self.glossary_output_var.get().strip(),
+                "input_glossary": self.input_glossary_var.get().strip(),
+                "from_doc": int(self.from_doc_var.get()) if self.from_doc_var.get().strip() else None,
+                "to_doc": int(self.to_doc_var.get()) if self.to_doc_var.get().strip() else None,
             },
             daemon=True,
         )
@@ -506,6 +630,12 @@ class EpubCorrectorGui:
         aggressive: bool = False,
         translate: str | None = None,
         max_workers: int = 1,
+        glossary_mode: bool = False,
+        glossary_context_length: int = 20000,
+        glossary_output: str = "",
+        input_glossary: str = "",
+        from_doc: int | None = None,
+        to_doc: int | None = None,
     ) -> None:
         try:
             level = logging.INFO if self.verbose_var.get() else logging.WARNING
@@ -515,6 +645,30 @@ class EpubCorrectorGui:
                 base_url=self.base_url_var.get().strip(),
                 api_key=self.api_key_var.get().strip(),
             )
+
+            if glossary_mode:
+                stem = os.path.splitext(os.path.basename(input_path))[0]
+                out_path = glossary_output or os.path.join("glossaries", f"{stem}_glossary.json")
+                os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+                print(f"Extracting glossary from: {input_path}")
+                print(f"Output: {out_path}")
+                glossary = extract_glossary(
+                    input_path=input_path,
+                    client=client,
+                    model=self.model_var.get().strip(),
+                    temperature=temperature,
+                    context_length=glossary_context_length,
+                    no_thinking=self.no_thinking_var.get(),
+                    debug=self.debug_var.get(),
+                    should_stop=self.stop_event.is_set,
+                )
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(glossary, f, ensure_ascii=False, indent=2)
+                total = sum(len(v) for v in glossary.values())
+                print(f"Glossary saved to {out_path} ({total} terms)")
+                print("Done.")
+                return
+
             book = epub.read_epub(input_path)
             stats = ProcessingStats()
             report_path = self.report_var.get().strip()
@@ -533,7 +687,23 @@ class EpubCorrectorGui:
             similarity_threshold = 0.0 if (is_translate or aggressive) else similarity
             max_change_ratio = 1.0 if (is_translate or aggressive) else max_change
 
-            for item in self._iter_document_items(book):
+            glossary_injection: str | None = None
+            if input_glossary and os.path.isfile(input_glossary):
+                glossary_data = load_glossary(input_glossary)
+                glossary_injection = format_glossary_injection(glossary_data) or None
+                if glossary_injection:
+                    total = sum(len(v) for v in glossary_data.values())
+                    print(f"Loaded glossary: {total} terms from {input_glossary}")
+            elif input_glossary:
+                print(f"WARNING: Glossary file not found: {input_glossary}")
+
+            all_items = list(self._iter_document_items(book))
+            from_idx = (from_doc - 1) if from_doc else 0
+            to_idx = to_doc if to_doc else len(all_items)
+            if from_doc or to_doc:
+                print(f"Processing documents {from_idx + 1}–{to_idx} of {len(all_items)}.")
+
+            for item in all_items[from_idx:to_idx]:
                 if self.stop_event.is_set():
                     print("Stopping as requested.")
                     break
@@ -566,7 +736,7 @@ class EpubCorrectorGui:
                     review_callback=self.review,
                     no_thinking=self.no_thinking_var.get(),
                     debug=self.debug_var.get(),
-                    use_schema=self.schema_var.get(),
+                    use_schema=not self.no_schema_var.get(),
                     max_context=max_context,
                     max_context_chars=max_context_chars,
                     previous_context=conserved_context if conserve_context else None,
@@ -575,6 +745,7 @@ class EpubCorrectorGui:
                     target_language=translate,
                     max_workers=max_workers,
                     should_stop=self.stop_event.is_set,
+                    glossary_injection=glossary_injection,
                 )
 
                 if checkpoint_path:

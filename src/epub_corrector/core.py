@@ -7,12 +7,13 @@ import json
 import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Iterable, Protocol
 
 from bs4 import BeautifulSoup, NavigableString, Tag
-from ebooklib import ITEM_DOCUMENT, epub
+from ebooklib import ITEM_DOCUMENT
 from openai import OpenAI
 
 SKIP_PARENT_TAGS = {
@@ -162,11 +163,15 @@ def _build_messages(
     rewrite: bool = False,
     translate: bool = False,
     target_language: str | None = None,
+    glossary_injection: str | None = None,
 ) -> list[dict[str, str]]:
     if translate and target_language:
         system = _TRANSLATE_SYSTEM_PROMPT_TEMPLATE.format(language=target_language)
     else:
         system = _REWRITE_SYSTEM_PROMPT if rewrite else _DEFAULT_SYSTEM_PROMPT
+
+    if glossary_injection:
+        system += glossary_injection
 
     if context_texts:
         if translate and target_language:
@@ -261,6 +266,7 @@ def _request_corrections(
     translate: bool = False,
     target_language: str | None = None,
     max_workers: int = 1,
+    glossary_injection: str | None = None,
 ) -> list[str]:
     kwargs = {}
     if no_thinking:
@@ -310,6 +316,7 @@ def _request_corrections(
             rewrite=rewrite,
             translate=translate,
             target_language=target_language,
+            glossary_injection=glossary_injection,
         )
         payload = {
             "model": model,
@@ -448,6 +455,7 @@ def _process_document(
     target_language: str | None = None,
     max_workers: int = 1,
     should_stop: Callable[[], bool] | None = None,
+    glossary_injection: str | None = None,
 ) -> list[str]:
     raw = item.get_content()
     soup = BeautifulSoup(raw, "xml")
@@ -471,6 +479,7 @@ def _process_document(
         stats.segments_seen += len(batch)
         originals = [s.original_text for s in batch]
         print(f"  [{doc_name}] batch {batch_idx} ({len(batch)} segments, {sum(len(s) for s in originals)} chars)...", flush=True)
+        t0 = time.perf_counter()
         try:
             corrected = _request_corrections(
                 client=client, model=model, texts=originals, temperature=temperature,
@@ -481,7 +490,12 @@ def _process_document(
                 translate=translate,
                 target_language=target_language,
                 max_workers=max_workers,
+                glossary_injection=glossary_injection,
             )
+            t1 = time.perf_counter()
+            elapsed = t1 - t0
+            total_chars = sum(len(s) for s in originals)
+            print(f"    took {elapsed:.2f}s for 1 request, {elapsed:.2f}s per request, {elapsed / total_chars:.4f}s per char (average)", flush=True)
         except Exception as exc:
             stats.failed_groups += 1
             logging.warning("Model request failed for one batch: %s", exc)
@@ -550,6 +564,7 @@ def _process_document(
                             translate=translate,
                             target_language=target_language,
                             max_workers=max_workers,
+                            glossary_injection=glossary_injection,
                         )
                     except Exception as exc:
                         stats.failed_groups += 1
@@ -594,6 +609,7 @@ def _iter_document_items(book) -> Iterable:
     for idref in spine_ids:
         if idref in id_to_item:
             yield id_to_item[idref]
+
 
 
 def _select_epub_from_books_folder() -> str:

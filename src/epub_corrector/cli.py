@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import logging
 import os
 import shutil
@@ -44,6 +45,12 @@ from .core import (
     _save_checkpoint,
     _select_epub_from_books_folder,
     _write_csv_report,
+)
+from .glossary import (
+    extract_glossary,
+    format_glossary_injection,
+    load_glossary,
+    summarize_glossary,
 )
 from ebooklib import epub
 
@@ -320,8 +327,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable reasoning/thinking mode (passes thinking.type=disabled to the API).",
     )
     parser.add_argument(
-        "--schema", action="store_true",
-        help="Use structured JSON output (response_format=json_object) and parse 'corrected_text' from the response. Useful for models that emit reasoning or extra commentary.",
+        "--no-schema", action="store_true",
+        help="Disable structured JSON output. By default the tool uses response_format=json_schema to isolate corrected text from model commentary/reasoning.",
     )
     parser.add_argument(
         "--rewrite", nargs="?", const="normal", default=None, metavar="MODE",
@@ -335,6 +342,41 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-workers", type=int, default=1,
         help="Maximum number of concurrent model requests to send in parallel within a batch. Defaults to 1 (sequential).",
     )
+    parser.add_argument(
+        "--from", dest="from_doc", type=int, default=None, metavar="N",
+        help="Start processing from the Nth HTML document (1-based). Documents before N are skipped.",
+    )
+    parser.add_argument(
+        "--to", dest="to_doc", type=int, default=None, metavar="N",
+        help="Stop after processing the Nth HTML document (1-based, inclusive). Documents after N are skipped.",
+    )
+    parser.add_argument(
+        "--glossary", nargs="?", const=True, metavar="INPUT_FILE",
+        help=(
+            "Extract a glossary of proper nouns, names, and special terms from the EPUB "
+            "instead of correcting it. Saved to glossaries/<stem>_glossary.json. "
+            "Optionally pass an explicit EPUB path; otherwise uses the positional 'input' argument."
+        ),
+    )
+    parser.add_argument(
+        "--glossary-context-length", type=int, default=20000, metavar="CHARS",
+        help="Characters per chunk sent to the LLM during glossary extraction (default: 20000).",
+    )
+    parser.add_argument(
+        "--input-glossary", metavar="PATH",
+        help=(
+            "Path to a glossary JSON file (produced by --glossary). "
+            "Injects the glossary terms into the system prompt so the LLM preserves them exactly."
+        ),
+    )
+    parser.add_argument(
+        "--summarize-glossary", metavar="PATH",
+        help=(
+            "Path to a glossary JSON file. Sends it to the LLM and asks it to remove clearly "
+            "meaningless entries (web artifacts, generic level numbers, HTML tags, etc.). "
+            "Overwrites the file in-place."
+        ),
+    )
     return parser
 
 
@@ -343,6 +385,60 @@ def run(args: argparse.Namespace) -> int:
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s: %(message)s",
     )
+
+    # --- Glossary summarization mode (standalone, does not correct) ---
+    if args.summarize_glossary:
+        gpath = args.summarize_glossary
+        if not os.path.isfile(gpath):
+            print(f"ERROR: Glossary file not found: {gpath}", file=sys.stderr)
+            return 1
+        glossary_data = load_glossary(gpath)
+        before_total = sum(len(v) for v in glossary_data.values())
+        print(f"Summarizing glossary: {gpath} ({before_total} terms)")
+        client = OpenAI(base_url=args.base_url, api_key=args.api_key)
+        cleaned = summarize_glossary(
+            glossary=glossary_data,
+            client=client,
+            model=args.model,
+            temperature=args.temperature,
+            no_thinking=args.no_thinking,
+            debug=args.debug,
+        )
+        after_total = sum(len(v) for v in cleaned.values())
+        with open(gpath, "w", encoding="utf-8") as f:
+            json.dump(cleaned, f, ensure_ascii=False, indent=2)
+        print(f"Done. {before_total} → {after_total} terms ({before_total - after_total} removed). Saved to {gpath}")
+        return 0
+
+    # --- Glossary extraction mode (standalone, does not correct) ---
+    if args.glossary:
+        glossary_epub = (
+            args.glossary if args.glossary is not True
+            else (args.input or _select_epub_from_books_folder())
+        )
+        if not os.path.isfile(glossary_epub):
+            print(f"ERROR: Input EPUB not found: {glossary_epub}", file=sys.stderr)
+            return 1
+        g_stem = os.path.splitext(os.path.basename(glossary_epub))[0]
+        os.makedirs("glossaries", exist_ok=True)
+        out_path = os.path.join("glossaries", f"{g_stem}_glossary.json")
+        print(f"Extracting glossary from: {glossary_epub}")
+        print(f"Output: {out_path}")
+        client = OpenAI(base_url=args.base_url, api_key=args.api_key)
+        glossary = extract_glossary(
+            input_path=glossary_epub,
+            client=client,
+            model=args.model,
+            temperature=args.temperature,
+            context_length=args.glossary_context_length,
+            no_thinking=args.no_thinking,
+            debug=args.debug,
+        )
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(glossary, f, ensure_ascii=False, indent=2)
+        total_terms = sum(len(v) for v in glossary.values())
+        print(f"Glossary saved to {out_path} ({total_terms} terms)")
+        return 0
 
     input_path: str = args.input or _select_epub_from_books_folder()
     basename = os.path.basename(input_path)
@@ -375,6 +471,21 @@ def run(args: argparse.Namespace) -> int:
         max_change_ratio = 1.0
 
     client = OpenAI(base_url=args.base_url, api_key=args.api_key)
+
+    # --- Input glossary injection ---
+    glossary_injection: str | None = None
+    if args.input_glossary:
+        if not os.path.isfile(args.input_glossary):
+            print(f"WARNING: Glossary file not found: {args.input_glossary}", file=sys.stderr)
+        else:
+            glossary_data = load_glossary(args.input_glossary)
+            glossary_injection = format_glossary_injection(glossary_data) or None
+            if glossary_injection:
+                total_terms = sum(len(v) for v in glossary_data.values())
+                print(f"Loaded glossary: {total_terms} terms from {args.input_glossary}")
+            else:
+                print(f"WARNING: Glossary file {args.input_glossary!r} is empty or has no recognized keys.", file=sys.stderr)
+
     book = epub.read_epub(input_path)
     stats = ProcessingStats()
     records: list[ChangeRecord] | None = [] if args.report else None
@@ -392,7 +503,13 @@ def run(args: argparse.Namespace) -> int:
 
     conserved_context: list[str] = []
 
-    for item in _iter_document_items(book):
+    all_items = list(_iter_document_items(book))
+    from_idx = (args.from_doc - 1) if args.from_doc else 0
+    to_idx = args.to_doc if args.to_doc else len(all_items)
+    if args.from_doc or args.to_doc:
+        print(f"Processing documents {from_idx + 1}–{to_idx} of {len(all_items)}.")
+
+    for item in all_items[from_idx:to_idx]:
         doc_name: str = item.file_name
 
         if doc_name in checkpoint:
@@ -421,7 +538,7 @@ def run(args: argparse.Namespace) -> int:
             review_callback=review_callback,
             no_thinking=args.no_thinking,
             debug=args.debug,
-            use_schema=args.schema,
+            use_schema=not args.no_schema,
             max_context=args.max_context,
             max_context_chars=args.max_context_chars,
             previous_context=conserved_context if args.conserve_context else None,
@@ -429,6 +546,7 @@ def run(args: argparse.Namespace) -> int:
             translate=translate,
             target_language=target_language,
             max_workers=args.max_workers,
+            glossary_injection=glossary_injection,
         )
 
         if checkpoint_path:
