@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import json
-import logging
 import os
 import shutil
 import sys
 
 from dotenv import load_dotenv
+from openai import OpenAI
 
-load_dotenv()
-
-_DEFAULT_BASE_URL = os.environ.get("EPUB_CORRECTOR_BASE_URL", "http://127.0.0.1:1234/v1")
-_DEFAULT_API_KEY = os.environ.get("EPUB_CORRECTOR_API_KEY", "lm-studio")
-_DEFAULT_MODEL = os.environ.get("EPUB_CORRECTOR_MODEL", "local-model")
+from .config import CorrectionConfig
+from .engine import BookProcessor
+from .glossary import extract_glossary, format_glossary_injection, load_glossary, summarize_glossary
+from .llm import LLMClient
+from .types import ReviewCallback
 
 try:
     import termios
@@ -30,29 +28,9 @@ try:
 except ImportError:
     _WINDOWS = False
 
-from openai import OpenAI
-
-from .core import (
-    ChangeRecord,
-    ProcessingStats,
-    ReviewCallback,
-    ReviewState,
-    _extract_segment_texts,
-    _iter_document_items,
-    _load_checkpoint,
-    _process_document,
-    _reorder_items_by_spine,
-    _save_checkpoint,
-    _select_epub_from_books_folder,
-    _write_csv_report,
-)
-from .glossary import (
-    extract_glossary,
-    format_glossary_injection,
-    load_glossary,
-    summarize_glossary,
-)
-from ebooklib import epub
+_DEFAULT_BASE_URL = os.environ.get("EPUB_CORRECTOR_BASE_URL", "http://127.0.0.1:1234/v1")
+_DEFAULT_API_KEY = os.environ.get("EPUB_CORRECTOR_API_KEY", "lm-studio")
+_DEFAULT_MODEL = os.environ.get("EPUB_CORRECTOR_MODEL", "local-model")
 
 _RST = "\x1b[0m"
 _BOLD = "\x1b[1m"
@@ -221,7 +199,6 @@ class TerminalReview(ReviewCallback):
                 return "reject"
             return "reject"
         else:
-            # Fallback for unknown platforms — line-buffered input
             line = sys.stdin.readline().strip().lower()
             if line in ("", "y", "yes"):
                 return "accept"
@@ -249,13 +226,37 @@ class TerminalReview(ReviewCallback):
             return None
         elif _WINDOWS:
             if msvcrt.kbhit():
-                # Drain the key press
                 while msvcrt.kbhit():
                     msvcrt.getch()
                 return "stop_auto_accept"
             return None
         else:
             return None
+
+
+def _select_epub_from_books_folder() -> str:
+    books_dir = os.path.join(os.getcwd(), "books")
+    if not os.path.isdir(books_dir):
+        raise SystemExit(
+            f"No 'books' folder found at {books_dir!r}. Pass an input path explicitly."
+        )
+    epubs = sorted(f for f in os.listdir(books_dir) if f.lower().endswith(".epub"))
+    if not epubs:
+        raise SystemExit(
+            f"No EPUB files found in {books_dir!r}. Pass an input path explicitly."
+        )
+    print("Available books:")
+    for i, name in enumerate(epubs, 1):
+        print(f"  {i}. {name}")
+    while True:
+        try:
+            raw = input(f"Select a book [1-{len(epubs)}]: ").strip()
+            idx = int(raw) - 1
+            if 0 <= idx < len(epubs):
+                return os.path.join(books_dir, epubs[idx])
+        except (ValueError, EOFError):
+            pass
+        print(f"Please enter a number between 1 and {len(epubs)}.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -343,6 +344,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of concurrent model requests to send in parallel within a batch. Defaults to 1 (sequential).",
     )
     parser.add_argument(
+        "--max-retries", type=int, default=3,
+        help="Maximum number of retries for a failed model request before aborting. Defaults to 3.",
+    )
+    parser.add_argument(
+        "--batch", metavar="FOLDER",
+        help="Process all EPUB files in FOLDER sequentially. Output and checkpoint paths are auto-derived per book.",
+    )
+    parser.add_argument(
         "--from", dest="from_doc", type=int, default=None, metavar="N",
         help="Start processing from the Nth HTML document (1-based). Documents before N are skipped.",
     )
@@ -381,12 +390,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
+    import logging
+
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s: %(message)s",
     )
 
-    # --- Glossary summarization mode (standalone, does not correct) ---
     if args.summarize_glossary:
         gpath = args.summarize_glossary
         if not os.path.isfile(gpath):
@@ -403,14 +413,15 @@ def run(args: argparse.Namespace) -> int:
             temperature=args.temperature,
             no_thinking=args.no_thinking,
             debug=args.debug,
+            max_retries=args.max_retries,
         )
         after_total = sum(len(v) for v in cleaned.values())
+        import json
         with open(gpath, "w", encoding="utf-8") as f:
             json.dump(cleaned, f, ensure_ascii=False, indent=2)
         print(f"Done. {before_total} → {after_total} terms ({before_total - after_total} removed). Saved to {gpath}")
         return 0
 
-    # --- Glossary extraction mode (standalone, does not correct) ---
     if args.glossary:
         glossary_epub = (
             args.glossary if args.glossary is not True
@@ -433,21 +444,80 @@ def run(args: argparse.Namespace) -> int:
             context_length=args.glossary_context_length,
             no_thinking=args.no_thinking,
             debug=args.debug,
+            max_retries=args.max_retries,
         )
+        import json
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(glossary, f, ensure_ascii=False, indent=2)
         total_terms = sum(len(v) for v in glossary.values())
         print(f"Glossary saved to {out_path} ({total_terms} terms)")
         return 0
 
-    input_path: str = args.input or _select_epub_from_books_folder()
+    client = OpenAI(base_url=args.base_url, api_key=args.api_key)
+    config = CorrectionConfig(
+        temperature=args.temperature,
+        max_segments_per_request=args.max_segments_per_request,
+        max_chars_per_request=args.max_chars_per_request,
+        similarity_threshold=args.similarity_threshold,
+        max_change_ratio=args.max_change_ratio,
+        max_context=args.max_context,
+        max_context_chars=args.max_context_chars,
+        max_workers=args.max_workers,
+        max_retries=args.max_retries,
+        no_thinking=args.no_thinking,
+        debug=args.debug,
+        use_schema=not args.no_schema,
+        rewrite=args.rewrite is not None,
+        translate=bool(args.translate),
+        target_language=args.translate,
+        aggressive=args.rewrite == "aggressive",
+    )
+
+    if args.input_glossary:
+        if not os.path.isfile(args.input_glossary):
+            print(f"WARNING: Glossary file not found: {args.input_glossary}", file=sys.stderr)
+        else:
+            glossary_data = load_glossary(args.input_glossary)
+            config.glossary_injection = format_glossary_injection(glossary_data) or None
+            if config.glossary_injection:
+                total_terms = sum(len(v) for v in glossary_data.values())
+                print(f"Loaded glossary: {total_terms} terms from {args.input_glossary}")
+            else:
+                print(f"WARNING: Glossary file {args.input_glossary!r} is empty or has no recognized keys.", file=sys.stderr)
+
+    llm = LLMClient(client, args.model, config)
+    processor = BookProcessor(llm, config)
+    review_callback = TerminalReview()
+
+    if args.batch:
+        if args.output:
+            print("ERROR: --output cannot be used with --batch", file=sys.stderr)
+            return 1
+        if args.checkpoint:
+            print("ERROR: --checkpoint cannot be used with --batch", file=sys.stderr)
+            return 1
+        if args.report:
+            print("ERROR: --report cannot be used with --batch", file=sys.stderr)
+            return 1
+
+        successes, failures = processor.process_batch(
+            args.batch,
+            review_callback=review_callback,
+            auto_accept=False,
+            conserve_context=args.conserve_context,
+            should_stop=None,
+            from_doc=args.from_doc,
+            to_doc=args.to_doc,
+        )
+        return 0 if not failures else 1
+
+    input_path = args.input or _select_epub_from_books_folder()
     basename = os.path.basename(input_path)
-    stem = os.path.splitext(basename)[0]
-    ext = os.path.splitext(basename)[1]
+    stem, ext = os.path.splitext(basename)
 
     translate_suffix = ""
-    if args.translate:
-        translate_suffix = f"_{args.translate.replace(' ', '_')}"
+    if config.translate and config.target_language:
+        translate_suffix = f"_{config.target_language.replace(' ', '_')}"
 
     if args.output:
         output_path = args.output
@@ -460,123 +530,22 @@ def run(args: argparse.Namespace) -> int:
         os.makedirs("checkpoints", exist_ok=True)
         checkpoint_path = os.path.join("checkpoints", f"{stem}{translate_suffix}.json")
 
-    similarity_threshold = args.similarity_threshold
-    max_change_ratio = args.max_change_ratio
-    translate = bool(args.translate)
-    target_language = args.translate
-    rewrite = args.rewrite is not None
-
-    if translate or args.rewrite == "aggressive":
-        similarity_threshold = 0.0
-        max_change_ratio = 1.0
-
-    client = OpenAI(base_url=args.base_url, api_key=args.api_key)
-
-    # --- Input glossary injection ---
-    glossary_injection: str | None = None
-    if args.input_glossary:
-        if not os.path.isfile(args.input_glossary):
-            print(f"WARNING: Glossary file not found: {args.input_glossary}", file=sys.stderr)
-        else:
-            glossary_data = load_glossary(args.input_glossary)
-            glossary_injection = format_glossary_injection(glossary_data) or None
-            if glossary_injection:
-                total_terms = sum(len(v) for v in glossary_data.values())
-                print(f"Loaded glossary: {total_terms} terms from {args.input_glossary}")
-            else:
-                print(f"WARNING: Glossary file {args.input_glossary!r} is empty or has no recognized keys.", file=sys.stderr)
-
-    book = epub.read_epub(input_path)
-    stats = ProcessingStats()
-    records: list[ChangeRecord] | None = [] if args.report else None
-    review = ReviewState()
-    review_callback = TerminalReview()
-
-    checkpoint: dict[str, str] = {}
-    if checkpoint_path:
-        checkpoint = _load_checkpoint(checkpoint_path)
-        if checkpoint:
-            logging.info(
-                "Resuming from checkpoint: %d document(s) already processed.",
-                len(checkpoint),
-            )
-
-    conserved_context: list[str] = []
-
-    all_items = list(_iter_document_items(book))
-    from_idx = (args.from_doc - 1) if args.from_doc else 0
-    to_idx = args.to_doc if args.to_doc else len(all_items)
-    if args.from_doc or args.to_doc:
-        print(f"Processing documents {from_idx + 1}–{to_idx} of {len(all_items)}.")
-
-    for item in all_items[from_idx:to_idx]:
-        doc_name: str = item.file_name
-
-        if doc_name in checkpoint:
-            logging.info("Skipping already-processed document: %s", doc_name)
-            item.set_content(base64.b64decode(checkpoint[doc_name]))
-            if args.conserve_context:
-                texts = _extract_segment_texts(item)
-                conserved_context.extend(texts)
-                if args.max_context > 0:
-                    conserved_context = conserved_context[-args.max_context:]
-            continue
-
-        conserved_context = _process_document(
-            item=item,
-            doc_name=doc_name,
-            client=client,
-            model=args.model,
-            temperature=args.temperature,
-            max_segments_per_request=args.max_segments_per_request,
-            max_chars_per_request=args.max_chars_per_request,
-            similarity_threshold=similarity_threshold,
-            max_change_ratio=max_change_ratio,
-            stats=stats,
-            records=records,
-            review=review,
-            review_callback=review_callback,
-            no_thinking=args.no_thinking,
-            debug=args.debug,
-            use_schema=not args.no_schema,
-            max_context=args.max_context,
-            max_context_chars=args.max_context_chars,
-            previous_context=conserved_context if args.conserve_context else None,
-            rewrite=args.rewrite,
-            translate=translate,
-            target_language=target_language,
-            max_workers=args.max_workers,
-            glossary_injection=glossary_injection,
-        )
-
-        if checkpoint_path:
-            checkpoint[doc_name] = base64.b64encode(item.get_content()).decode()
-            _save_checkpoint(checkpoint_path, checkpoint)
-
-        epub.write_epub(output_path, book, {})
-
-    _reorder_items_by_spine(book)
-    epub.write_epub(output_path, book, {})
-
-    if records is not None and args.report:
-        _write_csv_report(records, args.report)
-        print(f"Change report written to {args.report} ({len(records)} edits)")
-
-    print(
-        "Processed documents={docs}, groups={groups}, segments={segments}, "
-        "accepted={accepted}, rejected={rejected}, failed_groups={failed}".format(
-            docs=stats.docs_seen,
-            groups=stats.groups_seen,
-            segments=stats.segments_seen,
-            accepted=stats.accepted_changes,
-            rejected=stats.rejected_changes,
-            failed=stats.failed_groups,
-        )
+    processor.process_book(
+        input_path=input_path,
+        output_path=output_path,
+        checkpoint_path=checkpoint_path,
+        from_doc=args.from_doc,
+        to_doc=args.to_doc,
+        report_path=args.report,
+        review_callback=review_callback,
+        auto_accept=False,
+        conserve_context=args.conserve_context,
     )
     return 0
 
 
 def main() -> int:
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
     return run(args)

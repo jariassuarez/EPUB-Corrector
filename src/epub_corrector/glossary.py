@@ -7,7 +7,8 @@ from typing import Callable
 
 from openai import OpenAI
 
-from .core import _iter_document_items, _iter_rewritable_segments
+from .epub_io import iter_document_items
+from .html_parser import iter_rewritable_segments
 
 _GLOSSARY_SCHEMA = {
     "type": "object",
@@ -74,6 +75,65 @@ def _parse_glossary_response(content: str) -> dict[str, list[str]]:
     return json.loads(text)
 
 
+def _request_glossary_with_retry(
+    client: OpenAI,
+    model: str,
+    temperature: float,
+    messages: list[dict],
+    kwargs: dict,
+    max_retries: int,
+    debug: bool,
+) -> str:
+    """Send a glossary request with retries. Returns raw content on success."""
+    last_exc: Exception | None = None
+    last_response_content: str | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                messages=messages,
+                **kwargs,
+            )
+            content = response.choices[0].message.content or ""
+            last_response_content = content
+            if debug:
+                print(f"\n--- RESPONSE (attempt {attempt}) ---")
+                print(content)
+                print("--- END RESPONSE ---\n")
+            if not content.strip():
+                raise ValueError("Model returned empty output")
+            # Validate JSON
+            cleaned = content.strip()
+            fenced = re.search(r"^```(?:\w+)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
+            if fenced:
+                cleaned = fenced.group(1).strip()
+            # Just verify it's parseable JSON and an object
+            data = json.loads(cleaned)
+            if not isinstance(data, dict):
+                raise ValueError("Model returned non-object JSON")
+            return content
+        except Exception as exc:
+            logging.warning("Model request failed (attempt %d/%d): %s", attempt, max_retries, exc)
+            last_exc = exc
+            if attempt < max_retries:
+                print(f"    Request failed, retrying... ({attempt}/{max_retries})")
+                continue
+            err_parts = [
+                f"Model request failed after {max_retries} attempts.",
+                f"Last error: {last_exc}",
+            ]
+            err_parts.append("\n--- REQUEST MESSAGES ---")
+            err_parts.append(json.dumps(messages, ensure_ascii=False, indent=2))
+            if last_response_content is not None:
+                err_parts.append("\n--- LAST RESPONSE RECEIVED ---")
+                err_parts.append(last_response_content)
+            else:
+                err_parts.append("\n--- NO RESPONSE RECEIVED ---")
+            err_parts.append("\n--- END ---")
+            raise RuntimeError("\n".join(err_parts)) from last_exc
+
+
 def _make_glossary_kwargs(no_thinking: bool, schema_name: str = "glossary_extraction") -> dict:
     kwargs: dict = {
         "response_format": {
@@ -131,6 +191,7 @@ def extract_glossary(
     no_thinking: bool = False,
     debug: bool = False,
     should_stop: Callable[[], bool] | None = None,
+    max_retries: int = 3,
 ) -> dict[str, list[str]]:
     """
     Scan all spine documents of an EPUB and build a glossary of proper nouns,
@@ -148,11 +209,11 @@ def extract_glossary(
     current_first_chapter = 1
     chapter_idx = 0
 
-    for item in _iter_document_items(book):
+    for item in iter_document_items(book):
         chapter_idx += 1
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(item.get_content(), "xml")
-        for seg in _iter_rewritable_segments(soup):
+        for seg in iter_rewritable_segments(soup):
             text = seg.original_text
             if current_chars + len(text) > context_length and current_parts:
                 chunks.append("\n".join(current_parts))
@@ -193,28 +254,20 @@ def extract_glossary(
                 print(json.dumps(messages, ensure_ascii=False, indent=2))
                 print("--- END REQUEST ---\n")
 
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    temperature=temperature,
-                    messages=messages,
-                    **kwargs,
-                )
-                content = response.choices[0].message.content or ""
-                if debug:
-                    print(f"\n--- GLOSSARY RESPONSE ({idx}/{total}) ---")
-                    print(content)
-                    print("--- END RESPONSE ---\n")
-
-                data = _parse_glossary_response(content)
-                for key in merged:
-                    entries = data.get(key, [])
-                    if isinstance(entries, list):
-                        merged[key].extend(str(e) for e in entries if e)
-            except json.JSONDecodeError as exc:
-                logging.warning("Failed to parse glossary response for chunk %d: %s", idx, exc)
-            except Exception as exc:
-                logging.warning("Model request failed for glossary chunk %d: %s", idx, exc)
+            content = _request_glossary_with_retry(
+                client=client,
+                model=model,
+                temperature=temperature,
+                messages=messages,
+                kwargs=kwargs,
+                max_retries=max_retries,
+                debug=debug,
+            )
+            data = _parse_glossary_response(content)
+            for key in merged:
+                entries = data.get(key, [])
+                if isinstance(entries, list):
+                    merged[key].extend(str(e) for e in entries if e)
     except KeyboardInterrupt:
         print(f"\nInterrupted — saving partial glossary ({idx - 1}/{total} chunks processed).", flush=True)
 
@@ -228,6 +281,7 @@ def summarize_glossary(
     temperature: float,
     no_thinking: bool = False,
     debug: bool = False,
+    max_retries: int = 3,
 ) -> dict[str, list[str]]:
     """
     Send a glossary to the LLM and ask it to remove clearly meaningless entries.
@@ -249,13 +303,15 @@ def summarize_glossary(
         print("--- END REQUEST ---\n")
 
     kwargs = _make_glossary_kwargs(no_thinking, schema_name="glossary_summary")
-    response = client.chat.completions.create(
+    content = _request_glossary_with_retry(
+        client=client,
         model=model,
         temperature=temperature,
         messages=messages,
-        **kwargs,
+        kwargs=kwargs,
+        max_retries=max_retries,
+        debug=debug,
     )
-    content = response.choices[0].message.content or ""
 
     if debug:
         print("\n--- SUMMARIZE GLOSSARY RESPONSE ---")

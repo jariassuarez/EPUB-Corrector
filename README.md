@@ -30,6 +30,7 @@ epub-corrector-gui
 
 The GUI lets you:
 - Browse for input/output EPUB files
+- **Batch mode** — select a folder and process all EPUBs inside it
 - Connect to your local LLM server and **refresh the model list**
 - Adjust all processing options visually
 - Toggle **auto-accept all** changes
@@ -60,6 +61,14 @@ epub-corrector "books/My Book.epub"
 # Output  → output/My Book.epub
 # Checkpoint → checkpoints/My Book.json
 ```
+
+**Batch mode — process all EPUBs in a folder:**
+
+```bash
+epub-corrector --batch "books/"
+```
+
+In batch mode, the tool scans the folder for `.epub` files and processes each one sequentially. Output and checkpoint paths are auto-derived per book (same rules as single-book mode). `--output`, `--checkpoint`, and `--report` cannot be used with `--batch`. If one book fails, the error is logged and processing continues with the next book. A summary of successes and failures is printed at the end.
 
 ---
 
@@ -247,6 +256,8 @@ options:
   --similarity-threshold FLOAT    Auto-reject edits below this similarity (default: 0.88)
   --max-change-ratio FLOAT        Auto-reject edits above this change ratio (default: 0.20)
   --max-workers N                 Maximum concurrent model requests per batch (default: 1)
+  --max-retries N                 Maximum retries for a failed model request before aborting (default: 3)
+  --batch FOLDER                  Process all EPUB files in FOLDER sequentially. Output and checkpoint paths are auto-derived per book
   --report PATH                   Write CSV change report to PATH
   --checkpoint PATH               Checkpoint file for resume support. Defaults to checkpoints/<input-stem>.json
   --no-thinking                   Disable reasoning/thinking mode for supported models
