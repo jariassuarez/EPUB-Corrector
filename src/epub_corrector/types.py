@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
-from bs4 import NavigableString
+if TYPE_CHECKING:
+    from bs4 import NavigableString
 
 
 class StopProcessing(Exception):

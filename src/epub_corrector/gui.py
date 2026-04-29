@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import queue
-import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -45,7 +44,7 @@ def fetch_models(base_url: str) -> list[str]:
                 models.append(mid)
         return models
     except (URLError, json.JSONDecodeError, TimeoutError) as exc:
-        raise RuntimeError(f"Failed to fetch models: {exc}")
+        raise RuntimeError(f"Failed to fetch models: {exc}") from exc
 
 
 class GuiReview(ReviewCallback):
@@ -57,17 +56,19 @@ class GuiReview(ReviewCallback):
         self.stop_event = stop_event
 
     def ask(self, original: str, proposed: str, doc_name: str) -> str:
-        self.request_queue.put({
-            "original": original,
-            "proposed": proposed,
-            "doc_name": doc_name,
-        })
+        self.request_queue.put(
+            {
+                "original": original,
+                "proposed": proposed,
+                "doc_name": doc_name,
+            }
+        )
         while True:
             try:
                 return self.response_queue.get(timeout=0.2)
             except queue.Empty:
                 if self.stop_event.is_set():
-                    raise StopProcessing()
+                    raise StopProcessing() from None
 
     def poll(self) -> str | None:
         """No-op in GUI mode; stopping is handled via stop_event."""
@@ -107,14 +108,18 @@ class EpubCorrectorGui:
 
         ttk.Label(server_frame, text="Base URL:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         self.base_url_var = tk.StringVar(value=_DEFAULT_BASE_URL)
-        ttk.Entry(server_frame, textvariable=self.base_url_var, width=50).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+        ttk.Entry(server_frame, textvariable=self.base_url_var, width=50).grid(
+            row=0, column=1, sticky="ew", padx=5, pady=2
+        )
 
         ttk.Label(server_frame, text="API Key:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         self.api_key_var = tk.StringVar(value=_DEFAULT_API_KEY)
         self.api_key_entry = ttk.Entry(server_frame, textvariable=self.api_key_var, width=50, show="*")
         self.api_key_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
         self.show_key_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(server_frame, text="Show", variable=self.show_key_var, command=self._toggle_key_visibility).grid(row=1, column=2, sticky="w")
+        ttk.Checkbutton(
+            server_frame, text="Show", variable=self.show_key_var, command=self._toggle_key_visibility
+        ).grid(row=1, column=2, sticky="w")
 
         ttk.Label(server_frame, text="Model:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
         self.model_var = tk.StringVar(value=_DEFAULT_MODEL)
@@ -150,15 +155,21 @@ class EpubCorrectorGui:
         translate_row = (len(opts) + 1) // 2
         ttk.Label(opts_frame, text="Translate to:").grid(row=translate_row, column=0, sticky="w", padx=5, pady=2)
         self.translate_var = tk.StringVar()
-        ttk.Entry(opts_frame, textvariable=self.translate_var, width=30).grid(row=translate_row, column=1, columnspan=3, sticky="w", padx=5, pady=2)
+        ttk.Entry(opts_frame, textvariable=self.translate_var, width=30).grid(
+            row=translate_row, column=1, columnspan=3, sticky="w", padx=5, pady=2
+        )
 
         range_row = translate_row + 1
         ttk.Label(opts_frame, text="From doc #:").grid(row=range_row, column=0, sticky="w", padx=5, pady=2)
         self.from_doc_var = tk.StringVar()
-        ttk.Entry(opts_frame, textvariable=self.from_doc_var, width=8).grid(row=range_row, column=1, sticky="w", padx=5, pady=2)
+        ttk.Entry(opts_frame, textvariable=self.from_doc_var, width=8).grid(
+            row=range_row, column=1, sticky="w", padx=5, pady=2
+        )
         ttk.Label(opts_frame, text="To doc #:").grid(row=range_row, column=2, sticky="w", padx=5, pady=2)
         self.to_doc_var = tk.StringVar()
-        ttk.Entry(opts_frame, textvariable=self.to_doc_var, width=8).grid(row=range_row, column=3, sticky="w", padx=5, pady=2)
+        ttk.Entry(opts_frame, textvariable=self.to_doc_var, width=8).grid(
+            row=range_row, column=3, sticky="w", padx=5, pady=2
+        )
 
         cb_frame = ttk.Frame(opts_frame)
         cb_row = range_row + 1
@@ -178,7 +189,9 @@ class EpubCorrectorGui:
         ttk.Checkbutton(cb_frame, text="Debug", variable=self.debug_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Verbose", variable=self.verbose_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Auto-accept all", variable=self.auto_accept_var).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(cb_frame, text="Conserve context", variable=self.conserve_context_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(cb_frame, text="Conserve context", variable=self.conserve_context_var).pack(
+            side=tk.LEFT, padx=5
+        )
         ttk.Checkbutton(cb_frame, text="Rewrite", variable=self.rewrite_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(cb_frame, text="Aggressive", variable=self.aggressive_var).pack(side=tk.LEFT, padx=5)
 
@@ -199,12 +212,15 @@ class EpubCorrectorGui:
         ).grid(row=0, column=0, columnspan=3, sticky="w", padx=5, pady=2)
 
         self.file_widgets: list[tuple[Any, Any]] = []
-        for i, (label, var, cmd) in enumerate([
-            ("Input", self.input_path_var, self._browse_input),
-            ("Output EPUB", self.output_path_var, self._browse_output),
-            ("Checkpoint (optional)", self.checkpoint_var, self._browse_checkpoint),
-            ("Report CSV (optional)", self.report_var, self._browse_report),
-        ], start=1):
+        for i, (label, var, cmd) in enumerate(
+            [
+                ("Input", self.input_path_var, self._browse_input),
+                ("Output EPUB", self.output_path_var, self._browse_output),
+                ("Checkpoint (optional)", self.checkpoint_var, self._browse_checkpoint),
+                ("Report CSV (optional)", self.report_var, self._browse_report),
+            ],
+            start=1,
+        ):
             ttk.Label(files_frame, text=label + ":").grid(row=i, column=0, sticky="w", padx=5, pady=2)
             ent = ttk.Entry(files_frame, textvariable=var, width=60)
             ent.grid(row=i, column=1, sticky="ew", padx=5, pady=2)
@@ -227,24 +243,34 @@ class EpubCorrectorGui:
 
         ttk.Label(glossary_frame, text="Context length (chars):").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         self.glossary_context_length_var = tk.IntVar(value=20000)
-        ttk.Entry(glossary_frame, textvariable=self.glossary_context_length_var, width=12).grid(row=1, column=1, sticky="w", padx=5, pady=2)
+        ttk.Entry(glossary_frame, textvariable=self.glossary_context_length_var, width=12).grid(
+            row=1, column=1, sticky="w", padx=5, pady=2
+        )
 
         ttk.Label(glossary_frame, text="Save glossary to:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
         self.glossary_output_var = tk.StringVar()
-        ttk.Entry(glossary_frame, textvariable=self.glossary_output_var, width=50).grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+        ttk.Entry(glossary_frame, textvariable=self.glossary_output_var, width=50).grid(
+            row=2, column=1, sticky="ew", padx=5, pady=2
+        )
         ttk.Button(glossary_frame, text="Browse...", command=self._browse_glossary_output).grid(row=2, column=2, padx=5)
 
         ttk.Label(glossary_frame, text="Input glossary (optional):").grid(row=3, column=0, sticky="w", padx=5, pady=2)
         self.input_glossary_var = tk.StringVar()
-        ttk.Entry(glossary_frame, textvariable=self.input_glossary_var, width=50).grid(row=3, column=1, sticky="ew", padx=5, pady=2)
+        ttk.Entry(glossary_frame, textvariable=self.input_glossary_var, width=50).grid(
+            row=3, column=1, sticky="ew", padx=5, pady=2
+        )
         ttk.Button(glossary_frame, text="Browse...", command=self._browse_input_glossary).grid(row=3, column=2, padx=5)
 
         ttk.Label(glossary_frame, text="Summarize glossary:").grid(row=4, column=0, sticky="w", padx=5, pady=2)
         self.summarize_glossary_var = tk.StringVar()
-        ttk.Entry(glossary_frame, textvariable=self.summarize_glossary_var, width=50).grid(row=4, column=1, sticky="ew", padx=5, pady=2)
+        ttk.Entry(glossary_frame, textvariable=self.summarize_glossary_var, width=50).grid(
+            row=4, column=1, sticky="ew", padx=5, pady=2
+        )
         sum_btn_frame = ttk.Frame(glossary_frame)
         sum_btn_frame.grid(row=4, column=2, padx=5, sticky="w")
-        ttk.Button(sum_btn_frame, text="Browse...", command=self._browse_summarize_glossary).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(sum_btn_frame, text="Browse...", command=self._browse_summarize_glossary).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
         ttk.Button(sum_btn_frame, text="Summarize", command=self._start_summarize_glossary).pack(side=tk.LEFT)
 
         glossary_frame.columnconfigure(1, weight=1)
@@ -283,15 +309,11 @@ class EpubCorrectorGui:
             if path:
                 self.input_path_var.set(path)
                 if not self.output_path_var.get():
-                    self.output_path_var.set(
-                        os.path.splitext(path)[0] + "_corrected.epub"
-                    )
+                    self.output_path_var.set(os.path.splitext(path)[0] + "_corrected.epub")
                 if not self.glossary_output_var.get():
                     stem = os.path.splitext(os.path.basename(path))[0]
                     os.makedirs("glossaries", exist_ok=True)
-                    self.glossary_output_var.set(
-                        os.path.join("glossaries", f"{stem}_glossary.json")
-                    )
+                    self.glossary_output_var.set(os.path.join("glossaries", f"{stem}_glossary.json"))
 
     def _browse_output(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -323,16 +345,12 @@ class EpubCorrectorGui:
             self.glossary_output_var.set(path)
 
     def _browse_input_glossary(self) -> None:
-        path = filedialog.askopenfilename(
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-        )
+        path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
         if path:
             self.input_glossary_var.set(path)
 
     def _browse_summarize_glossary(self) -> None:
-        path = filedialog.askopenfilename(
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-        )
+        path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
         if path:
             self.summarize_glossary_var.set(path)
 
@@ -371,8 +389,10 @@ class EpubCorrectorGui:
             after_total = sum(len(v) for v in cleaned.values())
             with open(gpath, "w", encoding="utf-8") as f:
                 json.dump(cleaned, f, ensure_ascii=False, indent=2)
-            print(f"Done. {before_total} → {after_total} terms ({before_total - after_total} removed). Saved to {gpath}")
-        except Exception as exc:
+            print(
+                f"Done. {before_total} → {after_total} terms ({before_total - after_total} removed). Saved to {gpath}"
+            )
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
             print(f"ERROR: {exc}")
         finally:
             self.root.after(0, self._on_worker_done)
@@ -383,14 +403,16 @@ class EpubCorrectorGui:
             self.model_combo["values"] = models
             if models and self.model_var.get() not in models:
                 self.model_var.set(models[0])
-        except Exception as exc:
+        except RuntimeError as exc:
             messagebox.showerror("Error", str(exc))
 
     def _build_review_panel(self) -> None:
         self.review_frame = ttk.LabelFrame(self.scrollable_frame, text="Review Change", padding=10)
         self.review_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        self.review_doc_label = ttk.Label(self.review_frame, text="No pending review.", font=("TkDefaultFont", 10, "bold"))
+        self.review_doc_label = ttk.Label(
+            self.review_frame, text="No pending review.", font=("TkDefaultFont", 10, "bold")
+        )
         self.review_doc_label.pack(pady=(5, 10), padx=10, anchor="w")
 
         paned = ttk.PanedWindow(self.review_frame, orient=tk.HORIZONTAL)
@@ -402,12 +424,24 @@ class EpubCorrectorGui:
         paned.add(right_frame, weight=1)
 
         self.review_orig_text = tk.Text(
-            left_frame, wrap=tk.WORD, font=DEFAULT_FONT, state=tk.DISABLED,
-            bg="#fdfdfd", relief=tk.SUNKEN, borderwidth=1, height=10,
+            left_frame,
+            wrap=tk.WORD,
+            font=DEFAULT_FONT,
+            state=tk.DISABLED,
+            bg="#fdfdfd",
+            relief=tk.SUNKEN,
+            borderwidth=1,
+            height=10,
         )
         self.review_prop_text = tk.Text(
-            right_frame, wrap=tk.WORD, font=DEFAULT_FONT, state=tk.DISABLED,
-            bg="#fdfdfd", relief=tk.SUNKEN, borderwidth=1, height=10,
+            right_frame,
+            wrap=tk.WORD,
+            font=DEFAULT_FONT,
+            state=tk.DISABLED,
+            bg="#fdfdfd",
+            relief=tk.SUNKEN,
+            borderwidth=1,
+            height=10,
         )
         self.review_orig_text.pack(fill=tk.BOTH, expand=True)
         self.review_prop_text.pack(fill=tk.BOTH, expand=True)
@@ -422,19 +456,27 @@ class EpubCorrectorGui:
         btn_frame.pack(pady=(10, 5))
 
         self.review_accept_btn = ttk.Button(
-            btn_frame, text="Accept (Enter)", command=lambda: self._on_review_action("accept"),
+            btn_frame,
+            text="Accept (Enter)",
+            command=lambda: self._on_review_action("accept"),
         )
         self.review_accept_btn.pack(side=tk.LEFT, padx=5)
         self.review_skip_btn = ttk.Button(
-            btn_frame, text="Skip (n)", command=lambda: self._on_review_action("reject"),
+            btn_frame,
+            text="Skip (n)",
+            command=lambda: self._on_review_action("reject"),
         )
         self.review_skip_btn.pack(side=tk.LEFT, padx=5)
         self.review_retry_btn = ttk.Button(
-            btn_frame, text="Retry (r)", command=lambda: self._on_review_action("retry"),
+            btn_frame,
+            text="Retry (r)",
+            command=lambda: self._on_review_action("retry"),
         )
         self.review_retry_btn.pack(side=tk.LEFT, padx=5)
         self.review_accept_all_btn = ttk.Button(
-            btn_frame, text="Accept All (a)", command=lambda: self._on_review_action("accept_all"),
+            btn_frame,
+            text="Accept All (a)",
+            command=lambda: self._on_review_action("accept_all"),
         )
         self.review_accept_all_btn.pack(side=tk.LEFT, padx=5)
 
@@ -452,7 +494,7 @@ class EpubCorrectorGui:
             return
         focus = self.root.focus_get()
         if focus is not None:
-            w = focus
+            w: tk.Misc | None = focus
             while w is not None:
                 if w == self.review_frame:
                     break
@@ -549,7 +591,7 @@ class EpubCorrectorGui:
             return type_(var.get())
         except tk.TclError:
             messagebox.showerror("Invalid input", f"{label} must be a valid number.")
-            raise ValueError
+            raise ValueError from None
 
     def _start(self) -> None:
         input_path = self.input_path_var.get().strip()
@@ -714,7 +756,7 @@ class EpubCorrectorGui:
             print("Done.")
         except StopProcessing:
             print("Stopping as requested.")
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
             print(f"ERROR: {exc}")
         finally:
             self.root.after(0, self._on_worker_done)

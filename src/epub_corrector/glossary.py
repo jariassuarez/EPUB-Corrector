@@ -3,21 +3,26 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Callable
+from typing import TYPE_CHECKING
 
-from openai import OpenAI
+from openai import OpenAIError
 
 from .epub_io import iter_document_items
 from .html_parser import iter_rewritable_segments
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from openai import OpenAI
+
 _GLOSSARY_SCHEMA = {
     "type": "object",
     "properties": {
-        "names":         {"type": "array", "items": {"type": "string"}},
-        "places":        {"type": "array", "items": {"type": "string"}},
+        "names": {"type": "array", "items": {"type": "string"}},
+        "places": {"type": "array", "items": {"type": "string"}},
         "organizations": {"type": "array", "items": {"type": "string"}},
-        "terms":         {"type": "array", "items": {"type": "string"}},
-        "other":         {"type": "array", "items": {"type": "string"}},
+        "terms": {"type": "array", "items": {"type": "string"}},
+        "other": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["names", "places", "organizations", "terms", "other"],
     "additionalProperties": False,
@@ -38,7 +43,7 @@ _GLOSSARY_SYSTEM_PROMPT = (
     "- Include informal nicknames and epithets that have specific capitalization\n"
     "- Exclude common English words, generic nouns, and pronouns\n\n"
     "Respond with ONLY a JSON object with exactly these five keys: "
-    "\"names\", \"places\", \"organizations\", \"terms\", \"other\". "
+    '"names", "places", "organizations", "terms", "other". '
     "Each value is a JSON array of strings. No commentary, no markdown fences."
 )
 
@@ -72,14 +77,17 @@ def _parse_glossary_response(content: str) -> dict[str, list[str]]:
     fenced = re.search(r"^```(?:\w+)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fenced:
         text = fenced.group(1).strip()
-    return json.loads(text)
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("Expected JSON object")
+    return data
 
 
 def _request_glossary_with_retry(
     client: OpenAI,
     model: str,
     temperature: float,
-    messages: list[dict],
+    messages: list[dict[str, str]],
     kwargs: dict,
     max_retries: int,
     debug: bool,
@@ -92,7 +100,7 @@ def _request_glossary_with_retry(
             response = client.chat.completions.create(
                 model=model,
                 temperature=temperature,
-                messages=messages,
+                messages=messages,  # type: ignore[arg-type]
                 **kwargs,
             )
             content = response.choices[0].message.content or ""
@@ -113,7 +121,7 @@ def _request_glossary_with_retry(
             if not isinstance(data, dict):
                 raise ValueError("Model returned non-object JSON")
             return content
-        except Exception as exc:
+        except (OSError, OpenAIError, json.JSONDecodeError, ValueError) as exc:
             logging.warning("Model request failed (attempt %d/%d): %s", attempt, max_retries, exc)
             last_exc = exc
             if attempt < max_retries:
@@ -132,6 +140,7 @@ def _request_glossary_with_retry(
                 err_parts.append("\n--- NO RESPONSE RECEIVED ---")
             err_parts.append("\n--- END ---")
             raise RuntimeError("\n".join(err_parts)) from last_exc
+    raise RuntimeError("Model request failed unexpectedly after retries.")
 
 
 def _make_glossary_kwargs(no_thinking: bool, schema_name: str = "glossary_extraction") -> dict:
@@ -157,11 +166,7 @@ def format_glossary_injection(glossary: dict[str, list[str]]) -> str:
         "terms": "Terms",
         "other": "Other",
     }
-    lines = [
-        f"{label}: {', '.join(glossary.get(key, []))}"
-        for key, label in label_map.items()
-        if glossary.get(key)
-    ]
+    lines = [f"{label}: {', '.join(glossary.get(key, []))}" for key, label in label_map.items() if glossary.get(key)]
     if not lines:
         return ""
     return _GLOSSARY_INJECTION_TEMPLATE.format(entries="\n".join(lines))
@@ -212,6 +217,7 @@ def extract_glossary(
     for item in iter_document_items(book):
         chapter_idx += 1
         from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(item.get_content(), "xml")
         for seg in iter_rewritable_segments(soup):
             text = seg.original_text
@@ -228,14 +234,12 @@ def extract_glossary(
         chunks.append("\n".join(current_parts))
         chunk_ranges.append((current_first_chapter, chapter_idx))
 
-    merged: dict[str, list[str]] = {
-        "names": [], "places": [], "organizations": [], "terms": [], "other": []
-    }
+    merged: dict[str, list[str]] = {"names": [], "places": [], "organizations": [], "terms": [], "other": []}
 
     kwargs = _make_glossary_kwargs(no_thinking)
     total = len(chunks)
     try:
-        for idx, (chunk, (ch_first, ch_last)) in enumerate(zip(chunks, chunk_ranges), start=1):
+        for idx, (chunk, (ch_first, ch_last)) in enumerate(zip(chunks, chunk_ranges, strict=True), start=1):
             if should_stop and should_stop():
                 break
             print(f"Processing chapter {ch_first} to chapter {ch_last} ({idx}/{total})...", flush=True)
@@ -322,5 +326,5 @@ def summarize_glossary(
     result: dict[str, list[str]] = {}
     for key in ("names", "places", "organizations", "terms", "other"):
         entries = data.get(key, [])
-        result[key] = sorted(set(str(e) for e in entries if e)) if isinstance(entries, list) else []
+        result[key] = sorted({str(e) for e in entries if e}) if isinstance(entries, list) else []
     return result

@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from epub_corrector.config import CorrectionConfig
-from epub_corrector.engine import DocumentProcessor, BookProcessor
+from epub_corrector.engine import BookProcessor, DocumentProcessor
 from epub_corrector.types import ProcessingStats, ReviewState
 
 
@@ -95,8 +95,6 @@ def test_book_processor_with_checkpoint(mock_write, mock_read):
 
     with patch("epub_corrector.engine.load_checkpoint") as mock_load:
         mock_load.return_value = {"doc1": "abc"}
-        stats = bp.process_book(
-            "input.epub", "output.epub", checkpoint_path="chk.json"
-        )
+        stats = bp.process_book("input.epub", "output.epub", checkpoint_path="chk.json")
         mock_load.assert_called_once_with("chk.json")
         assert stats.docs_seen == 0

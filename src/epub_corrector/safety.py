@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import difflib
 
-BOUNDARY_PUNCT = frozenset('""\'\'-–—…')
+BOUNDARY_PUNCT = frozenset("\"\"''-–—…")
 
 
-def change_is_safe(
-    original: str, proposed: str, similarity_threshold: float, max_change_ratio: float
-) -> bool:
+def change_is_safe(original: str, proposed: str, similarity_threshold: float, max_change_ratio: float) -> bool:
     if original == proposed:
         return True
     if original.strip() and not proposed.strip():
@@ -16,9 +14,7 @@ def change_is_safe(
     change_ratio = 1.0 - similarity
     if similarity < similarity_threshold:
         return False
-    if change_ratio > max_change_ratio:
-        return False
-    return True
+    return change_ratio <= max_change_ratio
 
 
 def restore_boundary_punctuation(original: str, corrected: str) -> str:

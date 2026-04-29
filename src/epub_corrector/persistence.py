@@ -3,8 +3,10 @@ from __future__ import annotations
 import csv
 import json
 import os
+from typing import TYPE_CHECKING
 
-from .types import ChangeRecord
+if TYPE_CHECKING:
+    from .types import ChangeRecord
 
 
 def write_csv_report(records: list[ChangeRecord], path: str) -> None:
@@ -12,19 +14,25 @@ def write_csv_report(records: list[ChangeRecord], path: str) -> None:
         writer = csv.writer(f)
         writer.writerow(["document", "status", "original", "proposed"])
         for r in records:
-            writer.writerow([
-                r.doc_name,
-                "accepted" if r.accepted else "rejected",
-                r.original,
-                r.proposed,
-            ])
+            writer.writerow(
+                [
+                    r.doc_name,
+                    "accepted" if r.accepted else "rejected",
+                    r.original,
+                    r.proposed,
+                ]
+            )
 
 
 def load_checkpoint(path: str) -> dict[str, str]:
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f).get("processed", {})
-    except (FileNotFoundError, json.JSONDecodeError):
+            data = json.load(f)
+        processed = data.get("processed", {})
+        if not isinstance(processed, dict):
+            return {}
+        return {str(k): str(v) for k, v in processed.items()}
+    except (FileNotFoundError, json.JSONDecodeError, AttributeError):
         return {}
 
 

@@ -14,9 +14,7 @@ class _FakeNode:
 
 
 def test_skip_script_tags():
-    soup = BeautifulSoup(
-        "<html><script>alert('hi')</script><body>Hello</body></html>", "xml"
-    )
+    soup = BeautifulSoup("<html><script>alert('hi')</script><body>Hello</body></html>", "xml")
     segments = iter_rewritable_segments(soup)
     texts = [s.original_text for s in segments]
     assert "alert('hi')" not in texts

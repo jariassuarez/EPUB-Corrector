@@ -1,13 +1,28 @@
 from __future__ import annotations
 
+from typing import Any
+
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from .types import SegmentRef
 
 SKIP_PARENT_TAGS = {
-    "script", "style", "code", "pre", "kbd", "samp",
-    "head", "title", "meta", "link", "noscript", "nav",
-    "header", "footer", "aside", "address",
+    "script",
+    "style",
+    "code",
+    "pre",
+    "kbd",
+    "samp",
+    "head",
+    "title",
+    "meta",
+    "link",
+    "noscript",
+    "nav",
+    "header",
+    "footer",
+    "aside",
+    "address",
 }
 
 
@@ -30,9 +45,7 @@ def iter_rewritable_segments(soup: BeautifulSoup) -> list[SegmentRef]:
     return segments
 
 
-def split_large_group(
-    group: list[SegmentRef], max_segments: int, max_chars: int
-) -> list[list[SegmentRef]]:
+def split_large_group(group: list[SegmentRef], max_segments: int, max_chars: int) -> list[list[SegmentRef]]:
     result: list[list[SegmentRef]] = []
     current: list[SegmentRef] = []
     current_chars = 0
@@ -50,7 +63,7 @@ def split_large_group(
     return result
 
 
-def extract_segment_texts(item) -> list[str]:
+def extract_segment_texts(item: Any) -> list[str]:
     soup = BeautifulSoup(item.get_content(), "xml")
     segments = iter_rewritable_segments(soup)
     return [s.original_text for s in segments]

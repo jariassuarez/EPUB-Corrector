@@ -1,8 +1,9 @@
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
 from epub_corrector.config import CorrectionConfig
-from epub_corrector.llm import build_messages, extract_correction, LLMClient
+from epub_corrector.llm import LLMClient, build_messages, extract_correction
 
 
 def test_build_messages_default():

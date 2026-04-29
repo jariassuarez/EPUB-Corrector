@@ -5,18 +5,22 @@ import logging
 import os
 import sys
 import time
-from typing import Callable
+from typing import TYPE_CHECKING, Any
 
 from bs4 import BeautifulSoup, NavigableString
 from ebooklib import epub
 
-from .config import CorrectionConfig
 from .epub_io import iter_document_items, reorder_items_by_spine
 from .html_parser import extract_segment_texts, iter_rewritable_segments, split_large_group
-from .llm import LLMClient
 from .persistence import load_checkpoint, save_checkpoint, write_csv_report
 from .safety import change_is_safe
 from .types import ChangeRecord, ProcessingStats, ReviewState, StopProcessing
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .config import CorrectionConfig
+    from .llm import LLMClient
 
 
 class DocumentProcessor:
@@ -28,12 +32,12 @@ class DocumentProcessor:
 
     def process(
         self,
-        item,
+        item: Any,
         doc_name: str,
         stats: ProcessingStats,
         records: list[ChangeRecord] | None,
         review: ReviewState,
-        review_callback,
+        review_callback: Any,
         should_stop: Callable[[], bool] | None = None,
         previous_context: list[str] | None = None,
     ) -> list[str]:
@@ -134,9 +138,7 @@ class DocumentProcessor:
                         continue
                     elif action == "retry":
                         print("  Retrying batch...")
-                        corrected = self.llm.request_corrections(
-                            originals, previous_context=recent_context
-                        )
+                        corrected = self.llm.request_corrections(originals, previous_context=recent_context)
                         if should_stop and should_stop():
                             raise StopProcessing()
                         continue
@@ -186,7 +188,7 @@ class BookProcessor:
         from_doc: int | None = None,
         to_doc: int | None = None,
         report_path: str | None = None,
-        review_callback=None,
+        review_callback: Any = None,
         auto_accept: bool = False,
         conserve_context: bool = False,
         should_stop: Callable[[], bool] | None = None,
@@ -251,15 +253,8 @@ class BookProcessor:
             print(f"Change report written to {report_path} ({len(records)} edits)")
 
         print(
-            "Processed documents={docs}, groups={groups}, segments={segments}, "
-            "accepted={accepted}, rejected={rejected}, failed_groups={failed}".format(
-                docs=stats.docs_seen,
-                groups=stats.groups_seen,
-                segments=stats.segments_seen,
-                accepted=stats.accepted_changes,
-                rejected=stats.rejected_changes,
-                failed=stats.failed_groups,
-            )
+            f"Processed documents={stats.docs_seen}, groups={stats.groups_seen}, segments={stats.segments_seen}, "
+            f"accepted={stats.accepted_changes}, rejected={stats.rejected_changes}, failed_groups={stats.failed_groups}"
         )
         return stats
 
@@ -267,7 +262,7 @@ class BookProcessor:
         self,
         batch_folder: str,
         *,
-        review_callback=None,
+        review_callback: Any = None,
         auto_accept: bool = False,
         conserve_context: bool = False,
         should_stop: Callable[[], bool] | None = None,
@@ -302,11 +297,11 @@ class BookProcessor:
             os.makedirs("checkpoints", exist_ok=True)
             checkpoint_path = os.path.join("checkpoints", f"{stem}{translate_suffix}.json")
 
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Batch: {epub_name}")
             print(f"Output: {output_path}")
             print(f"Checkpoint: {checkpoint_path}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             try:
                 self.process_book(
@@ -324,11 +319,11 @@ class BookProcessor:
             except StopProcessing:
                 print("\nStopping batch as requested.")
                 break
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 print(f"\nFAILED: {epub_name}\nError: {exc}", file=sys.stderr)
                 failures.append((epub_name, str(exc)))
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"BATCH COMPLETE: {len(successes)} succeeded, {len(failures)} failed")
         if successes:
             print("Succeeded:")
@@ -338,5 +333,5 @@ class BookProcessor:
             print("Failed:")
             for name, err in failures:
                 print(f"  ✗ {name}: {err}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         return successes, failures

@@ -4,11 +4,16 @@ import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
-from openai import OpenAI
+from openai import OpenAIError
+
+from .safety import restore_boundary_punctuation
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 from .config import CorrectionConfig
-from .safety import restore_boundary_punctuation
 
 REWRITE_SYSTEM_PROMPT = (
     "You are a professional fiction editor specializing in translated literature.\n\n"
@@ -96,8 +101,8 @@ def build_messages(
     if cfg.use_schema:
         description = (
             "The translated text with the language changed while preserving all meaning, tone, and style."
-            if cfg.translate and cfg.target_language else
-            "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied."
+            if cfg.translate and cfg.target_language
+            else "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied."
         )
         system += (
             " Respond with a JSON object containing a single key 'corrected_text' "
@@ -148,8 +153,8 @@ class LLMClient:
         if self.config.use_schema:
             description = (
                 "The translated text with the language changed while preserving all meaning, tone, and style."
-                if self.config.translate and self.config.target_language else
-                "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied."
+                if self.config.translate and self.config.target_language
+                else "The corrected text with only grammar, punctuation, capitalization, and typo fixes applied."
             )
             kwargs["response_format"] = {
                 "type": "json_schema",
@@ -207,12 +212,12 @@ class LLMClient:
                         if not isinstance(data, dict) or "corrected_text" not in data:
                             raise ValueError("Model returned JSON without 'corrected_text' key")
                     except json.JSONDecodeError:
-                        raise ValueError("Model returned non-JSON output when schema was required")
+                        raise ValueError("Model returned non-JSON output when schema was required") from None
 
                 corrected = extract_correction(content, use_schema=cfg.use_schema)
                 corrected = restore_boundary_punctuation(text, corrected)
                 return corrected
-            except Exception as exc:
+            except (OSError, OpenAIError, json.JSONDecodeError, ValueError) as exc:
                 logging.warning("Model request failed (attempt %d/%d): %s", attempt, cfg.max_retries, exc)
                 last_exc = exc
                 if attempt < cfg.max_retries:
@@ -232,6 +237,7 @@ class LLMClient:
                     err_parts.append("\n--- NO RESPONSE RECEIVED ---")
                 err_parts.append("\n--- END ---")
                 raise RuntimeError("\n".join(err_parts)) from last_exc
+        raise RuntimeError("Model request failed unexpectedly after retries.")
 
     def request_corrections(
         self,
@@ -245,7 +251,7 @@ class LLMClient:
         for text in texts:
             context: list[str] = []
             if cfg.max_context > 0 and all_prior:
-                candidates = all_prior[-cfg.max_context:] if len(all_prior) > cfg.max_context else list(all_prior)
+                candidates = all_prior[-cfg.max_context :] if len(all_prior) > cfg.max_context else list(all_prior)
                 total_chars = 0
                 for ctx in reversed(candidates):
                     if cfg.max_context_chars > 0 and total_chars + len(ctx) > cfg.max_context_chars:
