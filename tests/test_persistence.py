@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 
@@ -53,5 +54,15 @@ def test_write_csv_report():
         assert lines[0] == "document,status,original,proposed"
         assert lines[1] == "ch1,accepted,a,b"
         assert lines[2] == "ch1,rejected,c,d"
+    finally:
+        os.unlink(path)
+
+
+def test_load_checkpoint_processed_not_dict():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump({"processed": "not-a-dict"}, f)
+        path = f.name
+    try:
+        assert load_checkpoint(path) == {}
     finally:
         os.unlink(path)
