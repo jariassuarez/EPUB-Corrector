@@ -23,6 +23,7 @@ def main() -> int:
         "--hidden-import", "ebooklib",
         "--hidden-import", "ebooklib.epub",
         "--collect-all", "ebooklib",
+        "--collect-all", "customtkinter",
         "--add-data", f"src/epub_corrector{sep}epub_corrector",
         "-p", "src",
         "src/gui_entry.py",

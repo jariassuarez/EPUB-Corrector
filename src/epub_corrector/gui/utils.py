@@ -5,7 +5,10 @@ import os
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+import customtkinter as ctk
 from dotenv import load_dotenv
+
+from epub_corrector.i18n import _
 
 load_dotenv()
 
@@ -30,4 +33,11 @@ def fetch_models(base_url: str) -> list[str]:
                 models.append(mid)
         return models
     except (URLError, json.JSONDecodeError, TimeoutError) as exc:
-        raise RuntimeError(f"Failed to fetch models: {exc}") from exc
+        raise RuntimeError(_("Failed to fetch models: {}").format(exc)) from exc
+
+
+def get_text_colors() -> tuple[str, str]:
+    """Return (background, foreground) for tk.Text widgets based on current theme."""
+    if ctk.get_appearance_mode() == "Dark":
+        return ("#2b2b2b", "#d4d4d4")
+    return ("#fdfdfd", "#1a1a1a")

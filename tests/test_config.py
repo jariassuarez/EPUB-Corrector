@@ -1,4 +1,4 @@
-from epub_corrector.config import CorrectionConfig, GlossaryConfig, ServerConfig
+from epub_corrector.config import CorrectionConfig, ServerConfig
 
 
 def test_server_config_defaults():
@@ -16,6 +16,7 @@ def test_correction_config_defaults():
     assert cfg.similarity_threshold == 0.88
     assert cfg.max_change_ratio == 0.20
     assert cfg.use_schema is True
+    assert cfg.no_thinking is True
 
 
 def test_effective_threshold_normal():
@@ -45,6 +46,3 @@ def test_effective_threshold_aggressive():
     assert cfg.effective_max_change_ratio() == 1.0
 
 
-def test_glossary_config_defaults():
-    cfg = GlossaryConfig()
-    assert cfg.context_length == 20000

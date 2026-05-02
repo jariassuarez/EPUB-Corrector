@@ -21,13 +21,12 @@ class CorrectionConfig:
     max_context_chars: int = 3000
     max_workers: int = 1
     max_retries: int = 3
-    no_thinking: bool = False
+    no_thinking: bool = True
     debug: bool = False
     use_schema: bool = True
     rewrite: bool = False
     translate: bool = False
     target_language: str | None = None
-    glossary_injection: str | None = None
     aggressive: bool = False
 
     def effective_similarity_threshold(self) -> float:
@@ -41,6 +40,3 @@ class CorrectionConfig:
         return self.max_change_ratio
 
 
-@dataclass
-class GlossaryConfig:
-    context_length: int = 20000

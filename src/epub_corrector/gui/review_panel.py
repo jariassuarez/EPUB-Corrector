@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import difflib
 import tkinter as tk
-from tkinter import ttk
 from typing import TYPE_CHECKING, Any
+
+import customtkinter as ctk
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from epub_corrector.gui.utils import DEFAULT_FONT
+from epub_corrector.i18n import _
+from epub_corrector.gui.utils import DEFAULT_FONT, get_text_colors
 
 
 class ReviewPanel:
@@ -18,29 +20,41 @@ class ReviewPanel:
         self.on_action = on_action
         self._review_pending = False
 
-        self.frame = ttk.LabelFrame(parent, text="Review Change", padding=10)
+        self.frame = ctk.CTkFrame(parent)
 
-        self.review_doc_label = ttk.Label(
-            self.frame, text="No pending review.", font=("TkDefaultFont", 10, "bold")
+        self.review_doc_label = ctk.CTkLabel(
+            self.frame,
+            text=_("No pending review."),
+            font=(*DEFAULT_FONT, "bold"),
         )
         self.review_doc_label.pack(pady=(5, 10), padx=10, anchor="w")
 
-        paned = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
+        paned = tk.PanedWindow(self.frame, orient=tk.HORIZONTAL, bg=ctk.ThemeManager.theme["CTkFrame"]["fg_color"][1])
         paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        left_frame = ttk.LabelFrame(paned, text="Original", padding=5)
-        right_frame = ttk.LabelFrame(paned, text="Proposed", padding=5)
-        paned.add(left_frame, weight=1)
-        paned.add(right_frame, weight=1)
+        left_frame = ctk.CTkFrame(paned)
+        right_frame = ctk.CTkFrame(paned)
+        paned.add(left_frame, stretch="always")
+        paned.add(right_frame, stretch="always")
 
+        ctk.CTkLabel(left_frame, text=_("Original"), font=(*DEFAULT_FONT, "bold")).pack(
+            anchor="w", padx=5, pady=(5, 0)
+        )
+        ctk.CTkLabel(right_frame, text=_("Proposed"), font=(*DEFAULT_FONT, "bold")).pack(
+            anchor="w", padx=5, pady=(5, 0)
+        )
+
+        bg, fg = get_text_colors()
         self.review_orig_text = tk.Text(
             left_frame,
             wrap=tk.WORD,
             font=DEFAULT_FONT,
             state=tk.DISABLED,
-            bg="#fdfdfd",
-            relief=tk.SUNKEN,
-            borderwidth=1,
+            bg=bg,
+            fg=fg,
+            insertbackground=fg,
+            relief=tk.FLAT,
+            borderwidth=0,
             height=10,
         )
         self.review_prop_text = tk.Text(
@@ -48,44 +62,46 @@ class ReviewPanel:
             wrap=tk.WORD,
             font=DEFAULT_FONT,
             state=tk.DISABLED,
-            bg="#fdfdfd",
-            relief=tk.SUNKEN,
-            borderwidth=1,
+            bg=bg,
+            fg=fg,
+            insertbackground=fg,
+            relief=tk.FLAT,
+            borderwidth=0,
             height=10,
         )
-        self.review_orig_text.pack(fill=tk.BOTH, expand=True)
-        self.review_prop_text.pack(fill=tk.BOTH, expand=True)
+        self.review_orig_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.review_prop_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        for txt, tag_name, bg in (
+        for txt, tag_name, tag_bg in (
             (self.review_orig_text, "del", "#ffcccc"),
             (self.review_prop_text, "ins", "#ccffcc"),
         ):
-            txt.tag_config(tag_name, background=bg)
+            txt.tag_config(tag_name, background=tag_bg)
 
-        btn_frame = ttk.Frame(self.frame)
+        btn_frame = ctk.CTkFrame(self.frame, fg_color="transparent")
         btn_frame.pack(pady=(10, 5))
 
-        self.review_accept_btn = ttk.Button(
+        self.review_accept_btn = ctk.CTkButton(
             btn_frame,
-            text="Accept (Enter)",
+            text=_("Accept (Enter)"),
             command=lambda: self._do_action("accept"),
         )
         self.review_accept_btn.pack(side=tk.LEFT, padx=5)
-        self.review_skip_btn = ttk.Button(
+        self.review_skip_btn = ctk.CTkButton(
             btn_frame,
-            text="Skip (n)",
+            text=_("Skip (n)"),
             command=lambda: self._do_action("reject"),
         )
         self.review_skip_btn.pack(side=tk.LEFT, padx=5)
-        self.review_retry_btn = ttk.Button(
+        self.review_retry_btn = ctk.CTkButton(
             btn_frame,
-            text="Retry (r)",
+            text=_("Retry (r)"),
             command=lambda: self._do_action("retry"),
         )
         self.review_retry_btn.pack(side=tk.LEFT, padx=5)
-        self.review_accept_all_btn = ttk.Button(
+        self.review_accept_all_btn = ctk.CTkButton(
             btn_frame,
-            text="Accept All (a)",
+            text=_("Accept All (a)"),
             command=lambda: self._do_action("accept_all"),
         )
         self.review_accept_all_btn.pack(side=tk.LEFT, padx=5)
@@ -97,22 +113,22 @@ class ReviewPanel:
 
     def _clear(self) -> None:
         self._review_pending = False
-        self.review_doc_label.config(text="No pending review.")
+        self.review_doc_label.configure(text=_("No pending review."))
         for widget in (self.review_orig_text, self.review_prop_text):
-            widget.config(state=tk.NORMAL)
+            widget.configure(state=tk.NORMAL)
             widget.delete("1.0", tk.END)
-            widget.insert(tk.END, "Waiting for next change...")
-            widget.config(state=tk.DISABLED)
+            widget.insert(tk.END, _("Waiting for next change..."))
+            widget.configure(state=tk.DISABLED)
         for btn in (self.review_accept_btn, self.review_skip_btn, self.review_retry_btn, self.review_accept_all_btn):
-            btn.config(state=tk.DISABLED)
+            btn.configure(state=tk.DISABLED)
 
     def show_review(self, original: str, proposed: str, doc_name: str) -> None:
         self._review_pending = True
-        self.review_doc_label.config(text=f"Document: {doc_name}")
+        self.review_doc_label.configure(text=_("Document: {}").format(doc_name))
         self._fill_diff(self.review_orig_text, original, proposed, is_original=True)
         self._fill_diff(self.review_prop_text, original, proposed, is_original=False)
         for btn in (self.review_accept_btn, self.review_skip_btn, self.review_retry_btn, self.review_accept_all_btn):
-            btn.config(state=tk.NORMAL)
+            btn.configure(state=tk.NORMAL)
         self.frame.focus_set()
 
     def clear_review(self) -> None:
@@ -166,7 +182,7 @@ class ReviewPanel:
         is_original: bool,
     ) -> None:
         matcher = difflib.SequenceMatcher(None, original, proposed)
-        widget.config(state=tk.NORMAL)
+        widget.configure(state=tk.NORMAL)
         widget.delete("1.0", tk.END)
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if is_original:
@@ -181,4 +197,4 @@ class ReviewPanel:
                 tag_name = "ins" if tag in ("replace", "insert") else ""
 
             widget.insert(tk.END, text, tag_name if tag_name else ())
-        widget.config(state=tk.DISABLED)
+        widget.configure(state=tk.DISABLED)

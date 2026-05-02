@@ -253,57 +253,6 @@ def test_run_normal(mock_makedirs, mock_isfile, mock_select, mock_openai):
 
 
 @patch("epub_corrector.cli.OpenAI")
-@patch("epub_corrector.cli.os.path.isfile")
-def test_run_summarize_glossary(mock_isfile, mock_openai):
-    mock_isfile.return_value = True
-    parser = build_parser()
-    args = parser.parse_args(["--summarize-glossary", "glossary.json"])
-
-    with patch("epub_corrector.cli.load_glossary", return_value={"names": ["A"]}):
-        with patch("epub_corrector.cli.summarize_glossary", return_value={"names": ["A"]}):
-            with patch("builtins.open", MagicMock()):
-                result = run(args)
-                assert result == 0
-
-
-@patch("epub_corrector.cli.OpenAI")
-@patch("epub_corrector.cli.os.path.isfile")
-def test_run_summarize_glossary_missing(mock_isfile, mock_openai):
-    mock_isfile.return_value = False
-    parser = build_parser()
-    args = parser.parse_args(["--summarize-glossary", "missing.json"])
-    result = run(args)
-    assert result == 1
-
-
-@patch("epub_corrector.cli.OpenAI")
-@patch("epub_corrector.cli.os.path.isfile")
-def test_run_extract_glossary(mock_isfile, mock_openai):
-    mock_isfile.return_value = True
-    parser = build_parser()
-    args = parser.parse_args(["--glossary", "input.epub"])
-
-    with patch("epub_corrector.cli.extract_glossary", return_value={"names": ["A"]}):
-        with patch("builtins.open", MagicMock()):
-            result = run(args)
-            assert result == 0
-
-
-@patch("epub_corrector.cli.OpenAI")
-@patch("epub_corrector.cli._select_epub_from_books_folder", return_value="books/test.epub")
-@patch("epub_corrector.cli.os.path.isfile")
-def test_run_glossary_select(mock_isfile, mock_select, mock_openai):
-    mock_isfile.return_value = True
-    parser = build_parser()
-    args = parser.parse_args(["--glossary"])
-
-    with patch("epub_corrector.cli.extract_glossary", return_value={"names": ["A"]}):
-        with patch("builtins.open", MagicMock()):
-            result = run(args)
-            assert result == 0
-
-
-@patch("epub_corrector.cli.OpenAI")
 @patch("epub_corrector.cli.os.path.isfile", return_value=True)
 def test_run_batch_with_output_error(mock_isfile, mock_openai):
     parser = build_parser()
@@ -348,33 +297,6 @@ def test_run_batch_success(mock_isdir, mock_isfile, mock_openai):
 
 @patch("epub_corrector.cli.OpenAI")
 @patch("epub_corrector.cli.os.path.isfile", return_value=True)
-def test_run_with_input_glossary(mock_isfile, mock_openai):
-    parser = build_parser()
-    args = parser.parse_args(["input.epub", "--input-glossary", "glossary.json"])
-
-    with patch("epub_corrector.cli.load_glossary", return_value={"names": ["A"]}):
-        with patch("epub_corrector.cli.BookProcessor") as mock_processor_cls:
-            mock_processor = MagicMock()
-            mock_processor_cls.return_value = mock_processor
-            result = run(args)
-            assert result == 0
-
-
-@patch("epub_corrector.cli.OpenAI")
-@patch("epub_corrector.cli.os.path.isfile", return_value=False)
-def test_run_with_missing_input_glossary(mock_isfile, mock_openai):
-    parser = build_parser()
-    args = parser.parse_args(["input.epub", "--input-glossary", "missing.json"])
-
-    with patch("epub_corrector.cli.BookProcessor") as mock_processor_cls:
-        mock_processor = MagicMock()
-        mock_processor_cls.return_value = mock_processor
-        result = run(args)
-        assert result == 0
-
-
-@patch("epub_corrector.cli.OpenAI")
-@patch("epub_corrector.cli.os.path.isfile", return_value=True)
 def test_run_translate(mock_isfile, mock_openai):
     parser = build_parser()
     args = parser.parse_args(["input.epub", "--translate", "French"])
@@ -391,19 +313,6 @@ def test_run_translate(mock_isfile, mock_openai):
 def test_run_rewrite(mock_isfile, mock_openai):
     parser = build_parser()
     args = parser.parse_args(["input.epub", "--rewrite"])
-
-    with patch("epub_corrector.cli.BookProcessor") as mock_processor_cls:
-        mock_processor = MagicMock()
-        mock_processor_cls.return_value = mock_processor
-        result = run(args)
-        assert result == 0
-
-
-@patch("epub_corrector.cli.OpenAI")
-@patch("epub_corrector.cli.os.path.isfile", return_value=True)
-def test_run_aggressive(mock_isfile, mock_openai):
-    parser = build_parser()
-    args = parser.parse_args(["input.epub", "--rewrite", "aggressive"])
 
     with patch("epub_corrector.cli.BookProcessor") as mock_processor_cls:
         mock_processor = MagicMock()
@@ -433,20 +342,14 @@ def test_main(mock_build_parser, mock_load_dotenv):
         checkpoint=None,
         verbose=False,
         debug=False,
-        no_thinking=False,
         no_schema=False,
-        rewrite=None,
+        rewrite=False,
         translate=None,
         max_workers=1,
         max_retries=3,
         batch=None,
         from_doc=None,
         to_doc=None,
-        glossary=None,
-        glossary_context_length=20000,
-        input_glossary=None,
-        summarize_glossary=None,
-        conserve_context=False,
     )
     mock_build_parser.return_value = mock_parser
 

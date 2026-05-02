@@ -3,18 +3,21 @@ from __future__ import annotations
 import logging
 import os
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 from typing import Any
+
+import customtkinter as ctk
 
 from openai import OpenAI
 
 from epub_corrector.config import CorrectionConfig
 from epub_corrector.engine import BookProcessor
-from epub_corrector.glossary import format_glossary_injection, load_glossary
+from epub_corrector.i18n import _, ngettext
 from epub_corrector.llm import LLMClient
 from epub_corrector.types import ReviewState, StopProcessing
 
 from .base_tab import BaseTab
+from .utils import DEFAULT_FONT
 from .widgets import CheckboxBar, FilePickerRow, OptionsGrid, ScrollableFrame, ServerConfigFrame
 
 
@@ -22,9 +25,9 @@ class SimpleCorrectionTab(BaseTab):
     """Tab for single EPUB correction with manual review support."""
 
     def title(self) -> str:
-        return "Simple Correction"
+        return _("Simple Correction")
 
-    def build(self, parent: ttk.Frame) -> None:
+    def build(self, parent: tk.Widget) -> None:
         scrollable = ScrollableFrame(parent)
         scrollable.pack(fill=tk.BOTH, expand=True)
         scrollable_frame = scrollable.inner
@@ -32,7 +35,10 @@ class SimpleCorrectionTab(BaseTab):
         self.server_frame = ServerConfigFrame(scrollable_frame)
         self.server_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        files_frame = ttk.LabelFrame(scrollable_frame, text="Files", padding=10)
+        ctk.CTkLabel(scrollable_frame, text=_("Files"), font=(*DEFAULT_FONT, "bold")).pack(
+            anchor="w", padx=20, pady=(10, 0)
+        )
+        files_frame = ctk.CTkFrame(scrollable_frame)
         files_frame.pack(fill=tk.X, padx=10, pady=5)
 
         self.input_path_var = tk.StringVar()
@@ -42,121 +48,96 @@ class SimpleCorrectionTab(BaseTab):
 
         FilePickerRow(
             files_frame,
-            "Input EPUB",
+            _("Input EPUB"),
             self.input_path_var,
             command=self._browse_input,
-            filetypes=[("EPUB files", "*.epub"), ("All files", "*.*")],
+            filetypes=[(_("EPUB files"), "*.epub"), (_("All files"), "*.*")],
             row=0,
         )
         FilePickerRow(
             files_frame,
-            "Output EPUB",
+            _("Output EPUB"),
             self.output_path_var,
-            filetypes=[("EPUB files", "*.epub"), ("All files", "*.*")],
+            filetypes=[(_("EPUB files"), "*.epub"), (_("All files"), "*.*")],
             save_mode=True,
             default_extension=".epub",
             row=1,
         )
         FilePickerRow(
             files_frame,
-            "Checkpoint (optional)",
+            _("Checkpoint (optional)"),
             self.checkpoint_var,
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            filetypes=[(_("JSON files"), "*.json"), (_("All files"), "*.*")],
             row=2,
         )
         FilePickerRow(
             files_frame,
-            "Report CSV (optional)",
+            _("Report CSV (optional)"),
             self.report_var,
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            filetypes=[(_("CSV files"), "*.csv"), (_("All files"), "*.*")],
             save_mode=True,
             default_extension=".csv",
             row=3,
         )
-        self.input_glossary_var = tk.StringVar()
-        FilePickerRow(
-            files_frame,
-            "Input glossary (optional)",
-            self.input_glossary_var,
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            row=4,
-        )
 
-        opts_frame = ttk.LabelFrame(scrollable_frame, text="Options", padding=10)
+        ctk.CTkLabel(scrollable_frame, text=_("Options"), font=(*DEFAULT_FONT, "bold")).pack(
+            anchor="w", padx=20, pady=(10, 0)
+        )
+        opts_frame = ctk.CTkFrame(scrollable_frame)
         opts_frame.pack(fill=tk.X, padx=10, pady=5)
 
         self.options = OptionsGrid(
             opts_frame,
             [
-                ("Temperature", tk.DoubleVar(value=0.0)),
-                ("Max segments / request", tk.IntVar(value=1)),
-                ("Max chars / request", tk.IntVar(value=6000)),
-                ("Similarity threshold", tk.DoubleVar(value=0.88)),
-                ("Max change ratio", tk.DoubleVar(value=0.20)),
-                ("Max context segments", tk.IntVar(value=0)),
-                ("Max context chars", tk.IntVar(value=3000)),
-                ("Max workers", tk.IntVar(value=1)),
-                ("Max retries", tk.IntVar(value=3)),
+                ("Temperature", _("Temperature"), tk.DoubleVar(value=0.0)),
+                ("Max segments / request", _("Max segments / request"), tk.IntVar(value=1)),
+                ("Max chars / request", _("Max chars / request"), tk.IntVar(value=6000)),
+                ("Similarity threshold", _("Similarity threshold"), tk.DoubleVar(value=0.88)),
+                ("Max change ratio", _("Max change ratio"), tk.DoubleVar(value=0.20)),
+                ("Max context segments", _("Max context segments"), tk.IntVar(value=0)),
+                ("Max context chars", _("Max context chars"), tk.IntVar(value=3000)),
+                ("Max workers", _("Max workers"), tk.IntVar(value=1)),
+                ("Max retries", _("Max retries"), tk.IntVar(value=3)),
             ],
         )
 
-        translate_row = 5
-        ttk.Label(opts_frame, text="Translate to:").grid(row=translate_row, column=0, sticky="w", padx=5, pady=2)
-        self.translate_var = tk.StringVar()
-        ttk.Entry(opts_frame, textvariable=self.translate_var, width=30).grid(
-            row=translate_row, column=1, columnspan=3, sticky="w", padx=5, pady=2
+        range_row = 5
+        ctk.CTkLabel(opts_frame, text=_("From doc #:"), font=DEFAULT_FONT).grid(
+            row=range_row, column=0, sticky="w", padx=5, pady=2
         )
-
-        range_row = translate_row + 1
-        ttk.Label(opts_frame, text="From doc #:").grid(row=range_row, column=0, sticky="w", padx=5, pady=2)
         self.from_doc_var = tk.StringVar()
-        ttk.Entry(opts_frame, textvariable=self.from_doc_var, width=8).grid(
+        ctk.CTkEntry(opts_frame, textvariable=self.from_doc_var, width=60).grid(
             row=range_row, column=1, sticky="w", padx=5, pady=2
         )
-        ttk.Label(opts_frame, text="To doc #:").grid(row=range_row, column=2, sticky="w", padx=5, pady=2)
+        ctk.CTkLabel(opts_frame, text=_("To doc #:"), font=DEFAULT_FONT).grid(
+            row=range_row, column=2, sticky="w", padx=5, pady=2
+        )
         self.to_doc_var = tk.StringVar()
-        ttk.Entry(opts_frame, textvariable=self.to_doc_var, width=8).grid(
+        ctk.CTkEntry(opts_frame, textvariable=self.to_doc_var, width=60).grid(
             row=range_row, column=3, sticky="w", padx=5, pady=2
         )
 
-        self.no_thinking_var = tk.BooleanVar(value=False)
-        self.debug_var = tk.BooleanVar(value=False)
-        self.verbose_var = tk.BooleanVar(value=False)
         self.auto_accept_var = tk.BooleanVar(value=False)
-        self.no_schema_var = tk.BooleanVar(value=False)
-        self.conserve_context_var = tk.BooleanVar(value=False)
         self.rewrite_var = tk.BooleanVar(value=False)
-        self.aggressive_var = tk.BooleanVar(value=False)
 
-        self.aggressive_var.trace_add("write", self._on_aggressive_toggle)
         self.auto_accept_var.trace_add("write", self._on_auto_accept_toggle)
 
         cb_bar = CheckboxBar(
             opts_frame,
             [
-                ("No thinking", self.no_thinking_var),
-                ("No schema", self.no_schema_var),
-                ("Debug", self.debug_var),
-                ("Verbose", self.verbose_var),
-                ("Auto-accept all", self.auto_accept_var),
-                ("Conserve context", self.conserve_context_var),
-                ("Rewrite", self.rewrite_var),
-                ("Aggressive", self.aggressive_var),
+                (_("Auto-accept all"), self.auto_accept_var),
+                (_("Rewrite"), self.rewrite_var),
             ],
         )
         cb_bar.grid(row=range_row + 1, column=0, columnspan=4, sticky="w", pady=(5, 0))
 
         self.review_state = ReviewState()
 
-    def _on_aggressive_toggle(self, *args: Any) -> None:
-        if self.aggressive_var.get():
-            self.rewrite_var.set(True)
-
     def _on_auto_accept_toggle(self, *args: Any) -> None:
         self.review_state.auto_accept = self.auto_accept_var.get()
 
     def _browse_input(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("EPUB files", "*.epub"), ("All files", "*.*")])
+        path = filedialog.askopenfilename(filetypes=[(_("EPUB files"), "*.epub"), (_("All files"), "*.*")])
         if path:
             self.input_path_var.set(path)
             if not self.output_path_var.get():
@@ -165,10 +146,10 @@ class SimpleCorrectionTab(BaseTab):
     def on_start(self) -> None:
         input_path = self.input_path_var.get().strip()
         if not input_path:
-            messagebox.showerror("Missing input", "Please select an input EPUB file.")
+            messagebox.showerror(_("Missing input"), _("Please select an input EPUB file."))
             return
         if not os.path.isfile(input_path):
-            messagebox.showerror("File not found", f"Input file not found:\n{input_path}")
+            messagebox.showerror(_("File not found"), _("Input file not found:\n{}").format(input_path))
             return
 
         output_path = self.output_path_var.get().strip()
@@ -189,7 +170,6 @@ class SimpleCorrectionTab(BaseTab):
         except ValueError:
             return
 
-        translate_lang = self.translate_var.get().strip() or None
         from_doc = int(self.from_doc_var.get()) if self.from_doc_var.get().strip() else None
         to_doc = int(self.to_doc_var.get()) if self.to_doc_var.get().strip() else None
         checkpoint_path = self.checkpoint_var.get().strip() or None
@@ -211,18 +191,11 @@ class SimpleCorrectionTab(BaseTab):
             "max_context_chars": max_context_chars,
             "max_workers": max_workers,
             "max_retries": max_retries,
-            "translate": translate_lang,
             "from_doc": from_doc,
             "to_doc": to_doc,
-            "conserve_context": self.conserve_context_var.get(),
             "rewrite": self.rewrite_var.get(),
-            "aggressive": self.aggressive_var.get(),
+            "aggressive": self.rewrite_var.get(),
             "server": server,
-            "no_thinking": self.no_thinking_var.get(),
-            "debug": self.debug_var.get(),
-            "no_schema": self.no_schema_var.get(),
-            "verbose": self.verbose_var.get(),
-            "input_glossary": self.input_glossary_var.get().strip(),
         }
         self.app.worker.start(
             lambda: self._run_worker(kwargs),
@@ -231,8 +204,7 @@ class SimpleCorrectionTab(BaseTab):
 
     def _run_worker(self, kwargs: dict[str, Any]) -> None:
         try:
-            level = logging.INFO if kwargs["verbose"] else logging.WARNING
-            logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+            logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
             client = OpenAI(base_url=kwargs["server"]["base_url"], api_key=kwargs["server"]["api_key"])
 
@@ -246,24 +218,9 @@ class SimpleCorrectionTab(BaseTab):
                 max_context_chars=kwargs["max_context_chars"],
                 max_workers=kwargs["max_workers"],
                 max_retries=kwargs["max_retries"],
-                no_thinking=kwargs["no_thinking"],
-                debug=kwargs["debug"],
-                use_schema=not kwargs["no_schema"],
                 rewrite=kwargs["rewrite"],
-                translate=bool(kwargs["translate"]),
-                target_language=kwargs["translate"],
                 aggressive=kwargs["aggressive"],
             )
-
-            if kwargs.get("input_glossary"):
-                if os.path.isfile(kwargs["input_glossary"]):
-                    glossary_data = load_glossary(kwargs["input_glossary"])
-                    config.glossary_injection = format_glossary_injection(glossary_data) or None
-                    if config.glossary_injection:
-                        total = sum(len(v) for v in glossary_data.values())
-                        print(f"Loaded glossary: {total} terms from {kwargs['input_glossary']}")
-                else:
-                    print(f"WARNING: Glossary file not found: {kwargs['input_glossary']}")
 
             llm = LLMClient(client, kwargs["server"]["model"], config)
             processor = BookProcessor(llm, config)
@@ -277,14 +234,13 @@ class SimpleCorrectionTab(BaseTab):
                 report_path=kwargs["report_path"],
                 review_callback=self.app.worker.review,
                 auto_accept=self.review_state.auto_accept,
-                conserve_context=kwargs["conserve_context"],
                 should_stop=self.app.worker.get_stop_check(),
             )
-            print("Done.")
+            print(_("Done."))
         except StopProcessing:
-            print("Stopping as requested.")
+            print(_("Stopping as requested."))
         except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
-            print(f"ERROR: {exc}")
+            print(_("ERROR: {}").format(exc))
 
     def _on_worker_done(self) -> None:
         self.app.review_panel.clear_review()

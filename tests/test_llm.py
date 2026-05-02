@@ -37,12 +37,6 @@ def test_build_messages_no_thinking():
     assert msgs[0]["content"].startswith("/no_think")
 
 
-def test_build_messages_glossary_injection():
-    cfg = CorrectionConfig(glossary_injection="\n\nTerms: foo, bar")
-    msgs = build_messages("hello", config=cfg)
-    assert "Terms: foo, bar" in msgs[0]["content"]
-
-
 def test_build_messages_translate_with_context():
     cfg = CorrectionConfig(translate=True, target_language="French")
     msgs = build_messages("hello", context_texts=["ctx1"], config=cfg)

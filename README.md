@@ -252,7 +252,6 @@ options:
   --max-chars-per-request N       Max characters per model call (default: 6000)
   --max-context N                 Number of previous segments to include as context (default: 0)
   --max-context-chars N           Maximum total characters of context per request (default: 3000)
-  --conserve-context              Preserve context across documents/chapters instead of resetting per file
   --similarity-threshold FLOAT    Auto-reject edits below this similarity (default: 0.88)
   --max-change-ratio FLOAT        Auto-reject edits above this change ratio (default: 0.20)
   --max-workers N                 Maximum concurrent model requests per batch (default: 1)
@@ -260,16 +259,11 @@ options:
   --batch FOLDER                  Process all EPUB files in FOLDER sequentially. Output and checkpoint paths are auto-derived per book
   --report PATH                   Write CSV change report to PATH
   --checkpoint PATH               Checkpoint file for resume support. Defaults to checkpoints/<input-stem>.json
-  --no-thinking                   Disable reasoning/thinking mode for supported models
   --no-schema                     Disable structured JSON output (enabled by default)
-  --rewrite [MODE]                Use the fiction-editor rewrite prompt instead of the strict grammar-only prompt. Pass 'aggressive' to disable safety filters.
+  --rewrite                       Use the fiction-editor rewrite prompt instead of the strict grammar-only prompt. This also disables safety filters (sets --similarity-threshold 0 and --max-change-ratio 1.0).
   --translate LANGUAGE            Translate the book into the specified language. Automatically sets --similarity-threshold 0.0 and --max-change-ratio 1.0
   --from N                        Start processing from the Nth HTML document (1-based). Documents before N are skipped.
   --to N                          Stop after the Nth HTML document (1-based, inclusive). Documents after N are skipped.
-  --glossary [INPUT_FILE]         Extract a glossary of proper nouns and special terms (standalone — does not correct). Saved to glossaries/<stem>_glossary.json
-  --glossary-context-length N     Characters per chunk sent to the LLM during glossary extraction (default: 20000)
-  --summarize-glossary PATH       Send a glossary JSON to the LLM to remove meaningless entries. Overwrites the file in-place
-  --input-glossary PATH           Glossary JSON to inject into the system prompt so the model preserves those terms exactly
   --debug                         Print raw request/response payloads for every model call
   --verbose                       Enable verbose logging
 ```
@@ -317,15 +311,7 @@ It must still never change names, places, facts, numbers, dates, or meaning.
 epub-corrector input.epub output.epub --rewrite
 ```
 
-> **Important:** Rewrite mode produces much more aggressive edits than grammar-only mode. The default safety filters (`--similarity-threshold 0.88` and `--max-change-ratio 0.20`) are calibrated for conservative corrections and will auto-reject most valid rewrites. You should loosen them significantly when using `--rewrite`. See [Safety Filters](#safety-filters) below.
-
-### Aggressive rewrite (`--rewrite aggressive`)
-
-Pass `aggressive` to `--rewrite` to automatically disable all safety filters. This sets `--similarity-threshold 0` and `--max-change-ratio 1.0`, so every edit is presented for review instead of being auto-rejected.
-
-```bash
-epub-corrector input.epub output.epub --rewrite aggressive
-```
+> **Important:** `--rewrite` automatically disables safety filters (`--similarity-threshold 0` and `--max-change-ratio 1.0`), so every edit is presented for review instead of being auto-rejected.
 
 ## Safety Filters
 
@@ -361,8 +347,6 @@ To disable (e.g., for models that don't support structured output):
 epub-corrector input.epub output.epub --no-schema
 ```
 
-The glossary extraction feature uses its own separate JSON schema with five array fields (`names`, `places`, `organizations`, `terms`, `other`) to guarantee a well-formed response.
-
 ## Recommended Settings for Long EPUBs
 
 ```bash
@@ -370,117 +354,6 @@ epub-corrector \
   --similarity-threshold 0.90 \
   --max-change-ratio 0.15 \
   --checkpoint progress.json
-```
-
----
-
-## Glossary Extraction (`--glossary`)
-
-Build a glossary of important terms from your EPUB before correcting it. The glossary mode scans the entire book and asks the model to identify names, places, organizations, special terms, and any other words that have specific capitalization or spelling that must be preserved — including informal nicknames and epithets like "Alluring Castle" or "the Iron Giant".
-
-```bash
-epub-corrector --glossary "books/My Book.epub"
-# Output: glossaries/My Book_glossary.json
-```
-
-You can also omit the path if you specify the input EPUB as the positional argument:
-
-```bash
-epub-corrector "books/My Book.epub" --glossary
-```
-
-The output is a JSON file saved to the `glossaries/` folder:
-
-```json
-{
-  "names":         ["Elara", "Kael"],
-  "places":        ["Alluring Castle", "Ashenvale City"],
-  "organizations": ["Iron Council"],
-  "terms":         ["Aetherbinding"],
-  "other":         ["The Reckoning"]
-}
-```
-
-By default each chunk sent to the model is 20 000 characters. Increase it for faster extraction on long books, decrease it if your model has a small context window:
-
-```bash
-epub-corrector --glossary "books/My Book.epub" --glossary-context-length 40000
-```
-
-The JSON file can be edited by hand before use — add entries, remove false positives, or fix canonical spellings.
-
-A dedicated JSON schema (`glossary_extraction`) is used for the extraction request, so the model always returns a valid, well-structured response.
-
-## Glossary Summarization (`--summarize-glossary`)
-
-Automated extraction can produce noisy results — website navigation artifacts, raw HTML tags, generic level numbers, real-world brand names, and stat-dump strings. Use `--summarize-glossary` to send an existing glossary to the LLM and ask it to remove the noise, keeping only entries that are genuinely meaningful for consistency.
-
-```bash
-epub-corrector --summarize-glossary "glossaries/My Book_glossary.json"
-```
-
-The file is overwritten in-place. The command prints a before/after term count so you can see what was removed:
-
-```
-Summarizing glossary: glossaries/My Book_glossary.json (142 terms)
-Done. 142 → 98 terms (44 removed). Saved to glossaries/My Book_glossary.json
-```
-
-Typical entries removed:
-- Website artifacts: `< report chapter >`
-- HTML/format strings: `html`
-- Generic sequential labels: `Level 0`, `Level 1`, …
-- Out-of-place real-world products: `iPhone 12`
-- Stat-dump strings: `Strength 5, Agility 3, Endurance 4`
-- Cross-category duplicates (kept only in the most specific category)
-
-The recommended workflow is:
-
-```bash
-# Step 1: extract
-epub-corrector --glossary "books/My Book.epub"
-
-# Step 2: summarize (remove noise)
-epub-corrector --summarize-glossary "glossaries/My Book_glossary.json"
-
-# Step 3: review / edit the cleaned glossary by hand if needed
-
-# Step 4: correct with the glossary active
-epub-corrector "books/My Book.epub" output/corrected.epub \
-  --input-glossary "glossaries/My Book_glossary.json"
-```
-
-## Glossary-Guided Correction (`--input-glossary`)
-
-Pass a glossary file to any correction run to tell the model exactly which terms must be preserved and how they should be capitalized:
-
-```bash
-# Step 1: extract
-epub-corrector --glossary "books/My Book.epub"
-
-# Step 2: review / edit glossaries/My Book_glossary.json as needed
-
-# Step 3: correct with the glossary active
-epub-corrector "books/My Book.epub" output/corrected.epub \
-  --input-glossary "glossaries/My Book_glossary.json"
-```
-
-Works with all modes — grammar correction, rewrite, and translation:
-
-```bash
-epub-corrector "books/My Book.epub" output/spanish.epub \
-  --translate Spanish \
-  --input-glossary "glossaries/My Book_glossary.json"
-```
-
-The glossary terms are injected into the system prompt as:
-
-```
-The following terms appear in this text and must be preserved exactly as written
-(including capitalization and spelling):
-Names: Elara, Kael
-Places: Alluring Castle, Ashenvale City
-...
 ```
 
 ---

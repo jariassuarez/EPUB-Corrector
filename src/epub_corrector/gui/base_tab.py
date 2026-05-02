@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from tkinter import ttk
+    import tkinter as tk
 
 
 class BaseTab(ABC):
@@ -18,7 +18,7 @@ class BaseTab(ABC):
         """Return the tab title shown in the notebook."""
         ...
 
-    def build(self, parent: ttk.Frame) -> None:
+    def build(self, parent: tk.Widget) -> None:
         """Build the tab's UI inside the given frame."""
         return None
 

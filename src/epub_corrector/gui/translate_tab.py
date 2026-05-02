@@ -12,20 +12,20 @@ from openai import OpenAI
 
 from epub_corrector.config import CorrectionConfig
 from epub_corrector.engine import BookProcessor
-from epub_corrector.i18n import _, ngettext
+from epub_corrector.i18n import _
 from epub_corrector.llm import LLMClient
 from epub_corrector.types import ReviewState, StopProcessing
 
 from .base_tab import BaseTab
-from .utils import DEFAULT_FONT, get_text_colors
+from .utils import DEFAULT_FONT
 from .widgets import CheckboxBar, FilePickerRow, OptionsGrid, ScrollableFrame, ServerConfigFrame
 
 
-class BatchCorrectionTab(BaseTab):
-    """Tab for batch EPUB correction (folder input)."""
+class TranslateTab(BaseTab):
+    """Tab for translating an EPUB into another language."""
 
     def title(self) -> str:
-        return _("Batch Correction")
+        return _("Translate")
 
     def build(self, parent: tk.Widget) -> None:
         scrollable = ScrollableFrame(parent)
@@ -42,13 +42,42 @@ class BatchCorrectionTab(BaseTab):
         files_frame.pack(fill=tk.X, padx=10, pady=5)
 
         self.input_path_var = tk.StringVar()
+        self.output_path_var = tk.StringVar()
+        self.checkpoint_var = tk.StringVar()
+        self.report_var = tk.StringVar()
+
         FilePickerRow(
             files_frame,
-            _("Input folder"),
+            _("Input EPUB"),
             self.input_path_var,
             command=self._browse_input,
-            dir_mode=True,
+            filetypes=[(_("EPUB files"), "*.epub"), (_("All files"), "*.*")],
             row=0,
+        )
+        FilePickerRow(
+            files_frame,
+            _("Output EPUB"),
+            self.output_path_var,
+            filetypes=[(_("EPUB files"), "*.epub"), (_("All files"), "*.*")],
+            save_mode=True,
+            default_extension=".epub",
+            row=1,
+        )
+        FilePickerRow(
+            files_frame,
+            _("Checkpoint (optional)"),
+            self.checkpoint_var,
+            filetypes=[(_("JSON files"), "*.json"), (_("All files"), "*.*")],
+            row=2,
+        )
+        FilePickerRow(
+            files_frame,
+            _("Report CSV (optional)"),
+            self.report_var,
+            filetypes=[(_("CSV files"), "*.csv"), (_("All files"), "*.*")],
+            save_mode=True,
+            default_extension=".csv",
+            row=3,
         )
 
         ctk.CTkLabel(scrollable_frame, text=_("Options"), font=(*DEFAULT_FONT, "bold")).pack(
@@ -63,8 +92,8 @@ class BatchCorrectionTab(BaseTab):
                 ("Temperature", _("Temperature"), tk.DoubleVar(value=0.0)),
                 ("Max segments / request", _("Max segments / request"), tk.IntVar(value=1)),
                 ("Max chars / request", _("Max chars / request"), tk.IntVar(value=6000)),
-                ("Similarity threshold", _("Similarity threshold"), tk.DoubleVar(value=0.88)),
-                ("Max change ratio", _("Max change ratio"), tk.DoubleVar(value=0.20)),
+                ("Similarity threshold", _("Similarity threshold"), tk.DoubleVar(value=0.0)),
+                ("Max change ratio", _("Max change ratio"), tk.DoubleVar(value=1.0)),
                 ("Max context segments", _("Max context segments"), tk.IntVar(value=0)),
                 ("Max context chars", _("Max context chars"), tk.IntVar(value=3000)),
                 ("Max workers", _("Max workers"), tk.IntVar(value=1)),
@@ -72,7 +101,16 @@ class BatchCorrectionTab(BaseTab):
             ],
         )
 
-        range_row = 5
+        translate_row = 5
+        ctk.CTkLabel(opts_frame, text=_("Target language:"), font=DEFAULT_FONT).grid(
+            row=translate_row, column=0, sticky="w", padx=5, pady=2
+        )
+        self.translate_var = tk.StringVar()
+        ctk.CTkEntry(opts_frame, textvariable=self.translate_var, width=200).grid(
+            row=translate_row, column=1, columnspan=3, sticky="w", padx=5, pady=2
+        )
+
+        range_row = translate_row + 1
         ctk.CTkLabel(opts_frame, text=_("From doc #:"), font=DEFAULT_FONT).grid(
             row=range_row, column=0, sticky="w", padx=5, pady=2
         )
@@ -89,7 +127,6 @@ class BatchCorrectionTab(BaseTab):
         )
 
         self.auto_accept_var = tk.BooleanVar(value=False)
-        self.rewrite_var = tk.BooleanVar(value=False)
 
         self.auto_accept_var.trace_add("write", self._on_auto_accept_toggle)
 
@@ -97,41 +134,35 @@ class BatchCorrectionTab(BaseTab):
             opts_frame,
             [
                 (_("Auto-accept all"), self.auto_accept_var),
-                (_("Rewrite"), self.rewrite_var),
             ],
         )
         cb_bar.grid(row=range_row + 1, column=0, columnspan=4, sticky="w", pady=(5, 0))
 
-        results_frame = ctk.CTkFrame(scrollable_frame)
-        results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        ctk.CTkLabel(results_frame, text=_("Results"), font=(*DEFAULT_FONT, "bold")).pack(
-            anchor="w", padx=10, pady=(10, 5)
-        )
-        bg, fg = get_text_colors()
-        self.results_text = tk.Text(
-            results_frame, wrap=tk.WORD, height=8, state=tk.DISABLED, bg=bg, fg=fg, insertbackground=fg
-        )
-        self.results_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-
         self.review_state = ReviewState()
-        self._last_results: tuple[list[str], list[tuple[str, str]]] = ([], [])
 
     def _on_auto_accept_toggle(self, *args: Any) -> None:
         self.review_state.auto_accept = self.auto_accept_var.get()
 
     def _browse_input(self) -> None:
-        path = filedialog.askdirectory()
+        path = filedialog.askopenfilename(filetypes=[(_("EPUB files"), "*.epub"), (_("All files"), "*.*")])
         if path:
             self.input_path_var.set(path)
+            if not self.output_path_var.get():
+                self.output_path_var.set(os.path.splitext(path)[0] + "_translated.epub")
 
     def on_start(self) -> None:
         input_path = self.input_path_var.get().strip()
         if not input_path:
-            messagebox.showerror(_("Missing input"), _("Please select an input folder."))
+            messagebox.showerror(_("Missing input"), _("Please select an input EPUB file."))
             return
-        if not os.path.isdir(input_path):
-            messagebox.showerror(_("Not a folder"), _("Batch mode requires a folder:\n{}").format(input_path))
+        if not os.path.isfile(input_path):
+            messagebox.showerror(_("File not found"), _("Input file not found:\n{}").format(input_path))
             return
+
+        output_path = self.output_path_var.get().strip()
+        if not output_path:
+            output_path = os.path.splitext(input_path)[0] + "_translated.epub"
+            self.output_path_var.set(output_path)
 
         try:
             temperature = self.options.get("Temperature", float)
@@ -146,12 +177,23 @@ class BatchCorrectionTab(BaseTab):
         except ValueError:
             return
 
+        translate_lang = self.translate_var.get().strip()
+        if not translate_lang:
+            messagebox.showerror(_("Missing language"), _("Please enter a target language."))
+            return
+
         from_doc = int(self.from_doc_var.get()) if self.from_doc_var.get().strip() else None
         to_doc = int(self.to_doc_var.get()) if self.to_doc_var.get().strip() else None
+        checkpoint_path = self.checkpoint_var.get().strip() or None
+        report_path = self.report_var.get().strip() or None
+
         server = self.server_frame.get_config()
 
         kwargs = {
             "input_path": input_path,
+            "output_path": output_path,
+            "checkpoint_path": checkpoint_path,
+            "report_path": report_path,
             "temperature": temperature,
             "max_segments": max_segments,
             "max_chars": max_chars,
@@ -161,10 +203,9 @@ class BatchCorrectionTab(BaseTab):
             "max_context_chars": max_context_chars,
             "max_workers": max_workers,
             "max_retries": max_retries,
+            "translate": translate_lang,
             "from_doc": from_doc,
             "to_doc": to_doc,
-            "rewrite": self.rewrite_var.get(),
-            "aggressive": self.rewrite_var.get(),
             "server": server,
         }
         self.app.worker.start(
@@ -188,23 +229,27 @@ class BatchCorrectionTab(BaseTab):
                 max_context_chars=kwargs["max_context_chars"],
                 max_workers=kwargs["max_workers"],
                 max_retries=kwargs["max_retries"],
-                rewrite=kwargs["rewrite"],
-                aggressive=kwargs["aggressive"],
+                rewrite=False,
+                translate=True,
+                target_language=kwargs["translate"],
+                aggressive=False,
             )
 
             llm = LLMClient(client, kwargs["server"]["model"], config)
             processor = BookProcessor(llm, config)
 
-            successes, failures = processor.process_batch(
-                kwargs["input_path"],
+            processor.process_book(
+                input_path=kwargs["input_path"],
+                output_path=kwargs["output_path"],
+                checkpoint_path=kwargs["checkpoint_path"],
+                from_doc=kwargs["from_doc"],
+                to_doc=kwargs["to_doc"],
+                report_path=kwargs["report_path"],
                 review_callback=self.app.worker.review,
                 auto_accept=self.review_state.auto_accept,
                 should_stop=self.app.worker.get_stop_check(),
-                from_doc=kwargs["from_doc"],
-                to_doc=kwargs["to_doc"],
             )
-            self._last_results = (successes, failures)
-            print(_("Batch complete. Success: {}, Failures: {}").format(len(successes), len(failures)))
+            print(_("Done."))
         except StopProcessing:
             print(_("Stopping as requested."))
         except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
@@ -213,25 +258,3 @@ class BatchCorrectionTab(BaseTab):
     def _on_worker_done(self) -> None:
         self.app.review_panel.clear_review()
         self.app.set_running(False)
-        successes, failures = self._last_results
-        lines = [
-            ngettext("Success: {} book", "Success: {} books", len(successes)).format(len(successes)),
-            ngettext("Failure: {} book", "Failures: {} books", len(failures)).format(len(failures)),
-        ]
-        if successes:
-            lines.append("")
-            lines.append(_("Successful:"))
-            for s in successes:
-                lines.append(f"  ✓ {s}")
-        if failures:
-            lines.append("")
-            lines.append(_("Failed:"))
-            for path, err in failures:
-                lines.append(f"  ✗ {path}: {err}")
-        self._set_results_text("\n".join(lines))
-
-    def _set_results_text(self, text: str) -> None:
-        self.results_text.configure(state=tk.NORMAL)
-        self.results_text.delete("1.0", tk.END)
-        self.results_text.insert(tk.END, text)
-        self.results_text.configure(state=tk.DISABLED)

@@ -76,9 +76,6 @@ def build_messages(
     else:
         system = REWRITE_SYSTEM_PROMPT if cfg.rewrite else DEFAULT_SYSTEM_PROMPT
 
-    if cfg.glossary_injection:
-        system += cfg.glossary_injection
-
     marker = "TRANSLATE THIS" if (cfg.translate and cfg.target_language) else "CORRECT THIS"
     if context_texts:
         if cfg.translate and cfg.target_language:

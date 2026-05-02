@@ -190,7 +190,7 @@ class BookProcessor:
         report_path: str | None = None,
         review_callback: Any = None,
         auto_accept: bool = False,
-        conserve_context: bool = False,
+        conserve_context: bool = True,
         should_stop: Callable[[], bool] | None = None,
     ) -> ProcessingStats:
         book = epub.read_epub(input_path)
@@ -264,7 +264,7 @@ class BookProcessor:
         *,
         review_callback: Any = None,
         auto_accept: bool = False,
-        conserve_context: bool = False,
+        conserve_context: bool = True,
         should_stop: Callable[[], bool] | None = None,
         from_doc: int | None = None,
         to_doc: int | None = None,

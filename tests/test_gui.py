@@ -8,11 +8,11 @@ from epub_corrector.gui.app import EpubCorrectorApp
 from epub_corrector.gui.base_tab import BaseTab
 from epub_corrector.gui.batch_tab import BatchCorrectionTab
 from epub_corrector.gui.debug_tab import DebugTab
-from epub_corrector.gui.glossary_tab import GlossaryTab
 from epub_corrector.gui.log_handler import GuiLogHandler, TeeStream, install_tee_stream
 from epub_corrector.gui.review_bridge import GuiReview
 from epub_corrector.gui.review_panel import ReviewPanel
 from epub_corrector.gui.simple_tab import SimpleCorrectionTab
+from epub_corrector.gui.summary_tab import SummaryTab
 from epub_corrector.gui.utils import fetch_models
 from epub_corrector.gui.widgets import (
     CheckboxBar,
@@ -314,12 +314,12 @@ class TestServerConfigFrame:
 class TestOptionsGrid:
     def test_get(self, root):
         var = tk.DoubleVar(value=1.5)
-        grid = OptionsGrid(root, [("Test", var)])
+        grid = OptionsGrid(root, [("Test", "Test", var)])
         assert grid.get("Test", float) == 1.5
 
     def test_get_invalid(self, root):
         var = tk.DoubleVar(value="not_a_number")
-        grid = OptionsGrid(root, [("Test", var)])
+        grid = OptionsGrid(root, [("Test", "Test", var)])
         with pytest.raises(ValueError):
             grid.get("Test", float)
 
@@ -368,7 +368,7 @@ class TestDebugTab:
         frame = tk.Frame(root)
         tab.build(frame)
         tab.level_var.set("ERROR")
-        tab._on_level_change()
+        tab._on_level_change("ERROR")
         import logging
 
         assert logging.getLogger().level == logging.ERROR
@@ -382,15 +382,6 @@ class TestSimpleCorrectionTab:
         frame = tk.Frame(root)
         tab.build(frame)
         assert tab.title() == "Simple Correction"
-
-    def test_on_aggressive_toggle(self, root):
-        app = MagicMock()
-        app.worker = WorkerController(root)
-        tab = SimpleCorrectionTab(app)
-        frame = tk.Frame(root)
-        tab.build(frame)
-        tab.aggressive_var.set(True)
-        assert tab.rewrite_var.get() is True
 
     def test_on_auto_accept_toggle(self, root):
         app = MagicMock()
@@ -411,15 +402,6 @@ class TestBatchCorrectionTab:
         tab.build(frame)
         assert tab.title() == "Batch Correction"
 
-    def test_on_aggressive_toggle(self, root):
-        app = MagicMock()
-        app.worker = WorkerController(root)
-        tab = BatchCorrectionTab(app)
-        frame = tk.Frame(root)
-        tab.build(frame)
-        tab.aggressive_var.set(True)
-        assert tab.rewrite_var.get() is True
-
     def test_on_auto_accept_toggle(self, root):
         app = MagicMock()
         app.worker = WorkerController(root)
@@ -430,21 +412,23 @@ class TestBatchCorrectionTab:
         assert tab.review_state.auto_accept is True
 
 
-class TestGlossaryTab:
+class TestTranslateTab:
     def test_creation(self, root):
+        from epub_corrector.gui.translate_tab import TranslateTab
+
         app = MagicMock()
         app.worker = WorkerController(root)
-        tab = GlossaryTab(app)
+        tab = TranslateTab(app)
         frame = tk.Frame(root)
         tab.build(frame)
-        assert tab.title() == "Glossary"
+        assert tab.title() == "Translate"
 
 
 class TestEpubCorrectorApp:
     def test_creation(self, root):
         app = EpubCorrectorApp(root)
         assert app.root is root
-        assert len(app.tabs) == 4
+        assert len(app.tabs) == 5
 
     def test_current_tab(self, root):
         app = EpubCorrectorApp(root)
@@ -488,6 +472,22 @@ class TestEpubCorrectorApp:
         app = EpubCorrectorApp(root)
         app._on_stdout_write("   ")
         # Should not add empty records
+
+
+class TestSummaryTab:
+    def test_creation(self, root):
+        app = MagicMock()
+        app.worker = WorkerController(root)
+        tab = SummaryTab(app)
+        frame = tk.Frame(root)
+        tab.build(frame)
+        assert tab.title() == "Summary"
+        assert tab.can_start() is False
+
+    def test_format_time(self):
+        assert SummaryTab._format_time(45.5) == "45m"
+        assert SummaryTab._format_time(125.0) == "2h 5m"
+        assert SummaryTab._format_time(0.0) == "0m"
 
 
 class TestFetchModels:

@@ -11,8 +11,8 @@ from openai import OpenAI
 
 from .config import CorrectionConfig
 from .engine import BookProcessor
-from .glossary import extract_glossary, format_glossary_injection, load_glossary, summarize_glossary
 from .llm import LLMClient
+from .summary import summarize_epub
 from .types import ReviewCallback
 
 try:
@@ -318,11 +318,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum total characters of context to send per request.",
     )
     parser.add_argument(
-        "--conserve-context",
-        action="store_true",
-        help="Preserve context across documents/chapters instead of resetting it for each HTML file.",
-    )
-    parser.add_argument(
         "--similarity-threshold",
         type=float,
         default=0.88,
@@ -349,22 +344,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--debug", action="store_true", help="Print sent and received raw prompts/responses for every model request."
     )
     parser.add_argument(
-        "--no-thinking",
-        action="store_true",
-        help="Disable reasoning/thinking mode (passes thinking.type=disabled to the API).",
-    )
-    parser.add_argument(
         "--no-schema",
         action="store_true",
         help="Disable structured JSON output. By default the tool uses response_format=json_schema to isolate corrected text from model commentary/reasoning.",
     )
     parser.add_argument(
         "--rewrite",
-        nargs="?",
-        const="normal",
-        default=None,
-        metavar="MODE",
-        help="Use the rewrite prompt aimed at improving translated literature into natural, fluent English prose instead of the strict grammar-only corrector prompt. Pass 'aggressive' to disable safety filters (sets --similarity-threshold 0 and --max-change-ratio 1.0).",
+        action="store_true",
+        help="Use the rewrite prompt aimed at improving translated literature into natural, fluent English prose instead of the strict grammar-only corrector prompt. This also disables safety filters (sets --similarity-threshold 0 and --max-change-ratio 1.0).",
     )
     parser.add_argument(
         "--translate",
@@ -405,39 +392,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop after processing the Nth HTML document (1-based, inclusive). Documents after N are skipped.",
     )
     parser.add_argument(
-        "--glossary",
-        nargs="?",
-        const=True,
-        metavar="INPUT_FILE",
-        help=(
-            "Extract a glossary of proper nouns, names, and special terms from the EPUB "
-            "instead of correcting it. Saved to glossaries/<stem>_glossary.json. "
-            "Optionally pass an explicit EPUB path; otherwise uses the positional 'input' argument."
-        ),
-    )
-    parser.add_argument(
-        "--glossary-context-length",
-        type=int,
-        default=20000,
-        metavar="CHARS",
-        help="Characters per chunk sent to the LLM during glossary extraction (default: 20000).",
-    )
-    parser.add_argument(
-        "--input-glossary",
-        metavar="PATH",
-        help=(
-            "Path to a glossary JSON file (produced by --glossary). "
-            "Injects the glossary terms into the system prompt so the LLM preserves them exactly."
-        ),
-    )
-    parser.add_argument(
-        "--summarize-glossary",
-        metavar="PATH",
-        help=(
-            "Path to a glossary JSON file. Sends it to the LLM and asks it to remove clearly "
-            "meaningless entries (web artifacts, generic level numbers, HTML tags, etc.). "
-            "Overwrites the file in-place."
-        ),
+        "--summary",
+        action="store_true",
+        help="Print summary statistics (chapters, words, estimated pages, reading time) for the input EPUB.",
     )
     return parser
 
@@ -450,59 +407,13 @@ def run(args: argparse.Namespace) -> int:
         format="%(levelname)s: %(message)s",
     )
 
-    if args.summarize_glossary:
-        gpath = args.summarize_glossary
-        if not os.path.isfile(gpath):
-            print(f"ERROR: Glossary file not found: {gpath}", file=sys.stderr)
+    if args.summary:
+        input_path = args.input or _select_epub_from_books_folder()
+        if not os.path.isfile(input_path):
+            print(f"ERROR: Input EPUB not found: {input_path}", file=sys.stderr)
             return 1
-        glossary_data = load_glossary(gpath)
-        before_total = sum(len(v) for v in glossary_data.values())
-        print(f"Summarizing glossary: {gpath} ({before_total} terms)")
-        client = OpenAI(base_url=args.base_url, api_key=args.api_key)
-        cleaned = summarize_glossary(
-            glossary=glossary_data,
-            client=client,
-            model=args.model,
-            temperature=args.temperature,
-            no_thinking=args.no_thinking,
-            debug=args.debug,
-            max_retries=args.max_retries,
-        )
-        after_total = sum(len(v) for v in cleaned.values())
-        import json
-
-        with open(gpath, "w", encoding="utf-8") as f:
-            json.dump(cleaned, f, ensure_ascii=False, indent=2)
-        print(f"Done. {before_total} → {after_total} terms ({before_total - after_total} removed). Saved to {gpath}")
-        return 0
-
-    if args.glossary:
-        glossary_epub = args.glossary if args.glossary is not True else (args.input or _select_epub_from_books_folder())
-        if not os.path.isfile(glossary_epub):
-            print(f"ERROR: Input EPUB not found: {glossary_epub}", file=sys.stderr)
-            return 1
-        g_stem = os.path.splitext(os.path.basename(glossary_epub))[0]
-        os.makedirs("glossaries", exist_ok=True)
-        out_path = os.path.join("glossaries", f"{g_stem}_glossary.json")
-        print(f"Extracting glossary from: {glossary_epub}")
-        print(f"Output: {out_path}")
-        client = OpenAI(base_url=args.base_url, api_key=args.api_key)
-        glossary = extract_glossary(
-            input_path=glossary_epub,
-            client=client,
-            model=args.model,
-            temperature=args.temperature,
-            context_length=args.glossary_context_length,
-            no_thinking=args.no_thinking,
-            debug=args.debug,
-            max_retries=args.max_retries,
-        )
-        import json
-
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(glossary, f, ensure_ascii=False, indent=2)
-        total_terms = sum(len(v) for v in glossary.values())
-        print(f"Glossary saved to {out_path} ({total_terms} terms)")
+        summary = summarize_epub(input_path)
+        print(summary.format())
         return 0
 
     client = OpenAI(base_url=args.base_url, api_key=args.api_key)
@@ -516,29 +427,13 @@ def run(args: argparse.Namespace) -> int:
         max_context_chars=args.max_context_chars,
         max_workers=args.max_workers,
         max_retries=args.max_retries,
-        no_thinking=args.no_thinking,
         debug=args.debug,
         use_schema=not args.no_schema,
-        rewrite=args.rewrite is not None,
+        rewrite=args.rewrite,
         translate=bool(args.translate),
         target_language=args.translate,
-        aggressive=args.rewrite == "aggressive",
+        aggressive=args.rewrite,
     )
-
-    if args.input_glossary:
-        if not os.path.isfile(args.input_glossary):
-            print(f"WARNING: Glossary file not found: {args.input_glossary}", file=sys.stderr)
-        else:
-            glossary_data = load_glossary(args.input_glossary)
-            config.glossary_injection = format_glossary_injection(glossary_data) or None
-            if config.glossary_injection:
-                total_terms = sum(len(v) for v in glossary_data.values())
-                print(f"Loaded glossary: {total_terms} terms from {args.input_glossary}")
-            else:
-                print(
-                    f"WARNING: Glossary file {args.input_glossary!r} is empty or has no recognized keys.",
-                    file=sys.stderr,
-                )
 
     llm = LLMClient(client, args.model, config)
     processor = BookProcessor(llm, config)
@@ -559,7 +454,6 @@ def run(args: argparse.Namespace) -> int:
             args.batch,
             review_callback=review_callback,
             auto_accept=False,
-            conserve_context=args.conserve_context,
             should_stop=None,
             from_doc=args.from_doc,
             to_doc=args.to_doc,
@@ -594,7 +488,6 @@ def run(args: argparse.Namespace) -> int:
         report_path=args.report,
         review_callback=review_callback,
         auto_accept=False,
-        conserve_context=args.conserve_context,
     )
     return 0
 

@@ -1,0 +1,408 @@
+# Spanish translations for EPUB Corrector
+# Copyright (C) 2026
+# This file is distributed under the same license as the epub-corrector package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: epub-corrector 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-30 17:00+0200\n"
+"PO-Revision-Date: 2026-04-30 17:00+0200\n"
+"Last-Translator: \n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: app.py
+msgid "EPUB Corrector"
+msgstr "Corrector EPUB"
+
+#: app.py
+msgid "Ready"
+msgstr "Listo"
+
+#: app.py
+msgid "Start"
+msgstr "Iniciar"
+
+#: app.py
+msgid "Stop"
+msgstr "Detener"
+
+#: app.py
+msgid "Running..."
+msgstr "Ejecutando..."
+
+#: app.py
+msgid "Language"
+msgstr "Idioma"
+
+#: app.py
+msgid "Restart required to apply language change."
+msgstr "Se requiere reiniciar para aplicar el cambio de idioma."
+
+#: app.py
+msgid "Restart now?"
+msgstr "¿Reiniciar ahora?"
+
+#: simple_tab.py batch_tab.py
+msgid "Simple Correction"
+msgstr "Corrección Simple"
+
+#: batch_tab.py
+msgid "Batch Correction"
+msgstr "Corrección por Lotes"
+
+#: translate_tab.py
+msgid "Translate"
+msgstr "Traducir"
+
+#: summary_tab.py
+msgid "Summary"
+msgstr "Resumen"
+
+#: debug_tab.py
+msgid "Debug"
+msgstr "Depuración"
+
+#: simple_tab.py batch_tab.py
+msgid "Files"
+msgstr "Archivos"
+
+#: summary_tab.py
+msgid "File"
+msgstr "Archivo"
+
+#: batch_tab.py
+msgid "Results"
+msgstr "Resultados"
+
+#: simple_tab.py summary_tab.py
+msgid "Input EPUB"
+msgstr "EPUB de entrada"
+
+#: simple_tab.py
+msgid "Output EPUB"
+msgstr "EPUB de salida"
+
+#: simple_tab.py
+msgid "Checkpoint (optional)"
+msgstr "Checkpoint (opcional)"
+
+#: simple_tab.py
+msgid "Report CSV (optional)"
+msgstr "Reporte CSV (opcional)"
+
+#: batch_tab.py
+msgid "Input folder"
+msgstr "Carpeta de entrada"
+
+#: simple_tab.py batch_tab.py
+msgid "Options"
+msgstr "Opciones"
+
+#: simple_tab.py batch_tab.py
+msgid "Temperature"
+msgstr "Temperatura"
+
+#: simple_tab.py batch_tab.py
+msgid "Max segments / request"
+msgstr "Máx. segmentos / solicitud"
+
+#: simple_tab.py batch_tab.py
+msgid "Max chars / request"
+msgstr "Máx. caracteres / solicitud"
+
+#: simple_tab.py batch_tab.py
+msgid "Similarity threshold"
+msgstr "Umbral de similitud"
+
+#: simple_tab.py batch_tab.py
+msgid "Max change ratio"
+msgstr "Ratio máx. de cambio"
+
+#: simple_tab.py batch_tab.py
+msgid "Max context segments"
+msgstr "Máx. segmentos de contexto"
+
+#: simple_tab.py batch_tab.py
+msgid "Max context chars"
+msgstr "Máx. caracteres de contexto"
+
+#: simple_tab.py batch_tab.py
+msgid "Max workers"
+msgstr "Máx. trabajadores"
+
+#: simple_tab.py batch_tab.py
+msgid "Max retries"
+msgstr "Máx. reintentos"
+
+#: translate_tab.py
+msgid "Target language:"
+msgstr "Idioma de destino:"
+
+#: simple_tab.py batch_tab.py
+msgid "From doc #:"
+msgstr "Desde doc #:"
+
+#: simple_tab.py batch_tab.py
+msgid "To doc #:"
+msgstr "Hasta doc #:"
+
+#: simple_tab.py batch_tab.py
+msgid "Auto-accept all"
+msgstr "Aceptar todo automáticamente"
+
+#: simple_tab.py batch_tab.py
+msgid "Rewrite"
+msgstr "Reescribir"
+
+#: simple_tab.py batch_tab.py summary_tab.py
+msgid "Missing input"
+msgstr "Entrada faltante"
+
+#: simple_tab.py summary_tab.py
+msgid "Please select an input EPUB file."
+msgstr "Por favor seleccione un archivo EPUB de entrada."
+
+#: simple_tab.py batch_tab.py summary_tab.py widgets.py utils.py
+msgid "File not found"
+msgstr "Archivo no encontrado"
+
+#: simple_tab.py summary_tab.py
+msgid "Input file not found:\n{}"
+msgstr "Archivo de entrada no encontrado:\n{}"
+
+#: batch_tab.py
+msgid "Please select an input folder."
+msgstr "Por favor seleccione una carpeta de entrada."
+
+#: batch_tab.py
+msgid "Not a folder"
+msgstr "No es una carpeta"
+
+#: batch_tab.py
+msgid "Batch mode requires a folder:\n{}"
+msgstr "El modo por lotes requiere una carpeta:\n{}"
+
+#: widgets.py
+msgid "Invalid input"
+msgstr "Entrada inválida"
+
+#: widgets.py
+msgid "{} must be a valid number."
+msgstr "{} debe ser un número válido."
+
+#: widgets.py utils.py
+msgid "Error"
+msgstr "Error"
+
+#: utils.py
+msgid "Failed to fetch models: {}"
+msgstr "Error al obtener modelos: {}"
+
+#: review_panel.py
+msgid "Review Change"
+msgstr "Revisar Cambio"
+
+#: review_panel.py
+msgid "No pending review."
+msgstr "No hay revisión pendiente."
+
+#: review_panel.py
+msgid "Original"
+msgstr "Original"
+
+#: review_panel.py
+msgid "Proposed"
+msgstr "Propuesto"
+
+#: review_panel.py
+msgid "Accept (Enter)"
+msgstr "Aceptar (Enter)"
+
+#: review_panel.py
+msgid "Skip (n)"
+msgstr "Saltar (n)"
+
+#: review_panel.py
+msgid "Retry (r)"
+msgstr "Reintentar (r)"
+
+#: review_panel.py
+msgid "Accept All (a)"
+msgstr "Aceptar Todo (a)"
+
+#: review_panel.py
+msgid "Waiting for next change..."
+msgstr "Esperando siguiente cambio..."
+
+#: review_panel.py
+msgid "Document: {}"
+msgstr "Documento: {}"
+
+#: widgets.py
+msgid "Browse..."
+msgstr "Examinar..."
+
+#: widgets.py
+msgid "Server"
+msgstr "Servidor"
+
+#: widgets.py
+msgid "Base URL:"
+msgstr "URL Base:"
+
+#: widgets.py
+msgid "API Key:"
+msgstr "Clave API:"
+
+#: widgets.py
+msgid "Show"
+msgstr "Mostrar"
+
+#: widgets.py
+msgid "Model:"
+msgstr "Modelo:"
+
+#: widgets.py
+msgid "Refresh Models"
+msgstr "Actualizar Modelos"
+
+#: summary_tab.py
+msgid "Chapters"
+msgstr "Capítulos"
+
+#: summary_tab.py
+msgid "Total words"
+msgstr "Palabras totales"
+
+#: summary_tab.py
+msgid "Total characters"
+msgstr "Caracteres totales"
+
+#: summary_tab.py
+msgid "Average words per chapter"
+msgstr "Promedio de palabras por capítulo"
+
+#: summary_tab.py
+msgid "Estimated pages"
+msgstr "Páginas estimadas"
+
+#: summary_tab.py
+msgid "Estimated reading time"
+msgstr "Tiempo estimado de lectura"
+
+#: summary_tab.py
+msgid "-"
+msgstr "-"
+
+#: summary_tab.py
+msgid "Analyze"
+msgstr "Analizar"
+
+#: debug_tab.py
+msgid "Log level:"
+msgstr "Nivel de registro:"
+
+#: debug_tab.py
+msgid "Clear"
+msgstr "Limpiar"
+
+#: widgets.py simple_tab.py batch_tab.py summary_tab.py
+msgid "All files"
+msgstr "Todos los archivos"
+
+#: widgets.py simple_tab.py batch_tab.py summary_tab.py
+msgid "EPUB files"
+msgstr "Archivos EPUB"
+
+#: widgets.py simple_tab.py batch_tab.py
+msgid "JSON files"
+msgstr "Archivos JSON"
+
+#: simple_tab.py
+msgid "CSV files"
+msgstr "Archivos CSV"
+
+#: batch_tab.py
+msgid "Success: {} book"
+msgid_plural "Success: {} books"
+msgstr[0] "Éxito: {} libro"
+msgstr[1] "Éxito: {} libros"
+
+#: batch_tab.py
+msgid "Failure: {} book"
+msgid_plural "Failures: {} books"
+msgstr[0] "Fallo: {} libro"
+msgstr[1] "Fallos: {} libros"
+
+#: batch_tab.py
+msgid "Successful:"
+msgstr "Exitoso:"
+
+#: batch_tab.py
+msgid "Failed:"
+msgstr "Fallido:"
+
+#: simple_tab.py batch_tab.py summary_tab.py
+msgid "Done."
+msgstr "Listo."
+
+#: simple_tab.py batch_tab.py
+msgid "Stopping as requested."
+msgstr "Deteniendo según lo solicitado."
+
+#: simple_tab.py batch_tab.py summary_tab.py
+msgid "ERROR: {}"
+msgstr "ERROR: {}"
+
+#: batch_tab.py
+msgid "Batch complete. Success: {}, Failures: {}"
+msgstr "Lote completado. Éxitos: {}, Fallos: {}"
+
+#: summary_tab.py
+msgid "Analyzing: {}"
+msgstr "Analizando: {}"
+
+#: summary.py
+msgid "Chapters: {}"
+msgstr "Capítulos: {}"
+
+#: summary.py
+msgid "Total words: {}"
+msgstr "Palabras totales: {}"
+
+#: summary.py
+msgid "Total characters: {}"
+msgstr "Caracteres totales: {}"
+
+#: summary.py
+msgid "Average words per chapter: {}"
+msgstr "Promedio de palabras por capítulo: {}"
+
+#: summary.py
+msgid "Estimated pages: {}"
+msgstr "Páginas estimadas: {}"
+
+#: summary.py
+msgid "Estimated reading time: {}"
+msgstr "Tiempo estimado de lectura: {}"
+
+#: summary_tab.py
+msgid "{}h {}m"
+msgstr "{}h {}m"
+
+#: summary_tab.py
+msgid "{}m"
+msgstr "{}m"
+
+#: translate_tab.py
+msgid "Missing language"
+msgstr "Idioma faltante"
+
+#: translate_tab.py
+msgid "Please enter a target language."
+msgstr "Por favor introduzca un idioma de destino."
